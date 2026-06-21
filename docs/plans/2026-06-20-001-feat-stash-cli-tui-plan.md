@@ -7,13 +7,13 @@ origin: docs/brainstorms/2026-06-20-stash-cli-requirements.md
 
 # feat: 添加本地 Stash CLI TUI
 
-## Summary
+## 摘要
 
 本计划覆盖需求文档中的第一阶段范围：构建一个不启动 Stash server、不访问 HTTP/GraphQL API 的本地交互式终端版 Stash。CLI 可以打开已有 Stash SQLite 数据库，也可以基于配置目录创建并扫描本地数据库；远程媒体通过已经挂载到本机的路径访问。
 
 实现策略是复用 Stash 现有 SQLite schema、migrations、repository、文件扫描和 ffmpeg 能力，同时新增一个独立 CLI/TUI 应用层。第一版以浏览、搜索、封面网格、列表降级、底部 slash-command、启动扫描和轻量 scene 编辑为核心，不纳入内置 SSH/SFTP、完整元数据管理、scraper、文件删除/移动或终端内视频播放。
 
-## Requirements
+## 需求
 
 - P-R1. 新增 CLI 必须独立运行，不启动 Web server，也不调用 Stash HTTP 或 GraphQL API。
 - P-R2. CLI 必须支持自己的 `config.toml`，读取数据库路径、媒体目录、启动扫描、展示字段、图形模式和缓存目录。
@@ -25,7 +25,7 @@ origin: docs/brainstorms/2026-06-20-stash-cli-requirements.md
 - P-R8. 第一版写入只覆盖 favorite、watched、rating、organized、title、date 等轻量字段，并在写入前做数据库安全检查。
 - P-R9. 所有新增用户文档、示例配置和命令说明使用中文。
 
-## High-Level Design
+## 高层设计
 
 ```mermaid
 flowchart TD
@@ -55,7 +55,7 @@ flowchart TD
 
 TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRenderer` 接口隔离终端图形实现：Kitty graphics 可用时使用 ntcharts `picture` 能力渲染合成网格，不可用时使用文本列表。Footer prompt 始终存在，slash-command 解析后派发到搜索、扫描、视图切换或轻量编辑服务。
 
-## Key Technical Decisions
+## 关键技术决策
 
 - 使用独立 `cmd/stash-cli`，降低对现有 server 入口、pflag 和 desktop 集成的影响。
 - CLI 配置独立于现有 Stash `config.yml`。只读取 CLI 需要的路径、字段和偏好，避免意外改写 Web server 配置。
@@ -64,7 +64,7 @@ TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRender
 - 封面优先读数据库中的 scene cover；缺失时可用 ffmpeg 生成，并按配置决定写回 DB 或写入 CLI 缓存。
 - 写入操作默认保守：检测到 SQLite busy、schema 不匹配或疑似 server 并发使用时，阻止写入并提示用户停止 Stash server。
 
-## Implementation Units
+## 实施单元
 
 ### U1. CLI 入口与配置
 
@@ -120,7 +120,7 @@ TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRender
 
 验收：`go test ./cmd/stash-cli ./internal/...` 覆盖 CLI 新包；与 sqlite/scan 相关测试使用临时目录和 fixture；文档包含 Kitty、list-only、挂载远程目录和停止 server 的说明。
 
-## Testing Strategy
+## 测试策略
 
 - 配置层：表驱动测试覆盖默认值、无效字段、路径展开和 list-only 模式。
 - 数据库层：临时 SQLite 文件测试打开、初始化、migration error 和 locked DB 错误分类。
@@ -129,7 +129,7 @@ TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRender
 - TUI 层：优先测试 command parser、state reducer、renderer mode selection；终端图形行为用手动验证记录。
 - 回归命令：运行 `go test ./cmd/stash-cli ./internal/... ./pkg/sqlite ./pkg/file ./pkg/scene`，必要时再运行 `make it`。
 
-## Manual Verification
+## 手动验证
 
 1. 在 Kitty 中使用已有数据库启动 CLI，确认默认进入封面网格。
 2. 设置 `graphics_mode = "list-only"` 后启动，确认进入纯列表。
@@ -138,7 +138,7 @@ TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRender
 5. 运行 `/search`、`/clear`、`/view list`、`/view grid`、`/help`，确认 footer 错误可恢复。
 6. 停止 Stash server 后编辑 title/rating/date；再模拟 DB busy，确认写入被阻止。
 
-## Risks And Mitigations
+## 风险与缓解
 
 - Stash scanner 与 manager 耦合较深。缓解：第一版只复用低层 scanner/scene/video 能力，避免拉起 manager 单例。
 - Kitty graphics 在不同终端、tmux 和 resize 下可能不稳定。缓解：渲染层可插拔，默认有 list fallback，并保留手动 override。
@@ -146,11 +146,11 @@ TUI 层采用 Bubble Tea 风格状态机。封面网格通过一个 `CoverRender
 - ffmpeg 对远程挂载路径可能较慢。缓解：扫描和 cover 生成可配置关闭，UI 中显示进度和可恢复错误。
 - 新依赖可能影响主应用构建。缓解：依赖集中在 CLI/TUI 包，先跑目标包测试，再跑现有验证命令。
 
-## Scope Boundaries
+## 范围边界
 
 第一版不实现内置 SSH/SFTP backend、完整 Web scanner parity、tag/performer/studio 管理、scraper/stash-box、文件删除/移动、后台服务模式或终端内视频播放。CLI 也不替代现有 Web UI；它是本地、键盘驱动、面向快速浏览和轻量编辑的补充入口。
 
-## Open Questions
+## 待确认问题
 
 - `watched` 和 `favorite` 在现有 schema 中的最终映射需要实施时确认，并以最小写入面实现。
 - 封面缺失时默认写回 DB 还是只写 CLI cache，需要在实现前结合用户偏好和数据库兼容性再定。

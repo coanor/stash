@@ -76,10 +76,11 @@ func main() {
 		return
 	}
 
-	s, err := scanner.New(cfg, store.Repo)
-	if err != nil {
-		exitError(err)
-		return
+	var scanSvc tui.Scanner
+	if s, err := scanner.New(cfg, store.Repo); err == nil {
+		scanSvc = s
+	} else {
+		logger.Warnf("stash-cli scan is unavailable: %v", err)
 	}
 
 	coverService := cover.New(store.Repo, cfg.CacheDir)
@@ -89,7 +90,7 @@ func main() {
 		Covers:          coverService,
 		PerformerImages: coverService,
 		Player:          player.New(store.Repo, cfg.FFplayPath, cfg.FFplayArgs),
-		Scanner:         s,
+		Scanner:         scanSvc,
 		ForceKitty:      cfg.GraphicsMode == config.GraphicsKitty,
 	}, tui.ViewGrid); err != nil {
 		exitError(err)

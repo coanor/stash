@@ -19,7 +19,7 @@ go run ./cmd/stash-cli
 ## 配置示例
 
 ```toml
-database_path = "/home/tan/git/stash/.local/stash-go.sqlite"
+database_path = "/home/tan/.stash/stash-go.sqlite"
 media_dirs = ["/mnt/media/videos", "/run/media/tan/remote/videos"]
 scan_on_startup = true
 graphics_mode = "auto"
@@ -32,9 +32,9 @@ ffplay_path = "/usr/bin/ffplay"
 ffplay_args = ["-autoexit", "-hide_banner", "-loglevel", "warning"]
 
 [blobs]
-# Match the Stash server config. Use filesystem when blobs_storage: FILESYSTEM.
+# 必须和 Stash server 的 blob 配置一致。server 使用 FILESYSTEM 时填 filesystem。
 storage = "filesystem"
-path = "/home/tan/git/stash/.local/blobs"
+path = "/home/tan/.stash/blobs"
 ```
 
 `graphics_mode` 支持 `auto` 和 `kitty`。当前 TUI 使用封面网格；`kitty` 会强制使用 Kitty graphics，适合 Kitty/Ghostty 等已确认支持 Kitty 协议的终端；`auto` 会依赖终端探测，失败时可能回退到 glyph。远程视频请先通过 `sshfs`、NFS、SMB 等方式挂载成本机路径，再写入 `media_dirs`。

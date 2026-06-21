@@ -679,6 +679,9 @@ func TestPerformerGridRatingAndDeleteCommandsUseSelectedPerformer(t *testing.T) 
 	if got := editor.performerRatings[8]; got != 90 {
 		t.Fatalf("performer rating = %d, want 90", got)
 	}
+	if got := m.performers[1].Rating; got == nil || *got != 90 {
+		t.Fatalf("ui performer rating = %v, want 90", got)
+	}
 
 	m.input = "delete"
 	updated, cmd = m.executeInput()
@@ -692,9 +695,63 @@ func TestPerformerGridRatingAndDeleteCommandsUseSelectedPerformer(t *testing.T) 
 	}
 	msg = cmd()
 	next, _ = updated.Update(msg)
-	_ = next.(Model)
+	m = next.(Model)
 	if len(editor.deletedPerformers) != 1 || editor.deletedPerformers[0] != 8 {
 		t.Fatalf("deleted performers = %#v, want [8]", editor.deletedPerformers)
+	}
+	if len(m.performers) != 1 || m.performers[0].ID != 7 {
+		t.Fatalf("performers = %#v, want only Alice", m.performers)
+	}
+}
+
+func TestPerformerCommandsKeepStateWhenWriteFails(t *testing.T) {
+	editor := &fakeEditor{err: errors.New("database locked")}
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}, Editor: editor}, ViewGrid)
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Performers: []browse.PerformerItem{
+				{ID: 7, Name: "Alice"},
+				{ID: 8, Name: "Bob"},
+			},
+		}},
+	}
+	model.grid = gridPerformers
+	model.performers = append([]browse.PerformerItem(nil), model.result.Items[0].Performers...)
+	model.cursor = 1
+	model.input = "rating 90"
+
+	updated, cmd := model.executeInput()
+	if cmd == nil {
+		t.Fatal("expected performer rating command")
+	}
+	msg := cmd()
+	next, _ := updated.Update(msg)
+	m := next.(Model)
+	if got := m.performers[1].Rating; got != nil {
+		t.Fatalf("ui performer rating = %v, want nil after failed write", got)
+	}
+
+	m.input = "delete"
+	updated, cmd = m.executeInput()
+	if cmd != nil {
+		t.Fatal("delete should wait for confirmation")
+	}
+	m = updated.(Model)
+	updated, cmd = m.Update(tea.KeyPressMsg{Text: "y"})
+	if cmd == nil {
+		t.Fatal("expected performer delete command")
+	}
+	msg = cmd()
+	next, _ = updated.Update(msg)
+	m = next.(Model)
+	if len(m.performers) != 2 {
+		t.Fatalf("performers len = %d, want 2 after failed delete", len(m.performers))
+	}
+	if m.status != "database locked" {
+		t.Fatalf("status = %q, want database locked", m.status)
 	}
 }
 
@@ -993,17 +1050,6 @@ func TestUpdateAutoSwitchesToKittyWhenSupported(t *testing.T) {
 	}
 }
 
-func TestRenderGridBodyPreservesPreviewContent(t *testing.T) {
-	preview := "abc\n123"
-	list := "one\ntwo\nthree"
-
-	got := renderGridBody(preview, 5, list)
-	want := "abc  one\n123  two\n       three\n"
-	if got != want {
-		t.Fatalf("renderGridBody = %q, want %q", got, want)
-	}
-}
-
 func TestGridColumnsUsesTerminalWidth(t *testing.T) {
 	tests := []struct {
 		width int
@@ -1121,31 +1167,6 @@ func TestFormatPlayProgressStatusShowsLightProgressBar(t *testing.T) {
 	}
 	if !strings.Contains(got, "[") || !strings.Contains(got, "]") || !strings.Contains(got, "25%") {
 		t.Fatalf("status missing progress bar and percent: %q", got)
-	}
-}
-
-func TestVisibleStartScrollsCursorIntoView(t *testing.T) {
-	tests := []struct {
-		name   string
-		cursor int
-		total  int
-		limit  int
-		want   int
-	}{
-		{name: "top", cursor: 0, total: 20, limit: 5, want: 0},
-		{name: "last visible row", cursor: 4, total: 20, limit: 5, want: 0},
-		{name: "scrolls down", cursor: 5, total: 20, limit: 5, want: 1},
-		{name: "near bottom", cursor: 19, total: 20, limit: 5, want: 15},
-		{name: "short list", cursor: 2, total: 3, limit: 5, want: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := visibleStart(tt.cursor, tt.total, tt.limit)
-			if got != tt.want {
-				t.Fatalf("visibleStart = %d, want %d", got, tt.want)
-			}
-		})
 	}
 }
 

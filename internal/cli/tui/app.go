@@ -318,6 +318,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "Played: " + msg.item.Title
+	case performerRatingMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.applyPerformerRating(msg.performerID, msg.rating)
+		m.status = "Performer rating updated"
+	case deletePerformerMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.applyPerformerDelete(msg.performerID)
+		m.status = "Performer deleted"
 	}
 
 	return m, m.updatePictures(msg)
@@ -358,43 +372,6 @@ func (m Model) View() tea.View {
 	view := tea.NewView(b.String())
 	view.AltScreen = true
 	return view
-}
-
-func visibleStart(cursor, total, limit int) int {
-	if total <= 0 || limit <= 0 || total <= limit || cursor < limit {
-		return 0
-	}
-	start := cursor - limit + 1
-	maxStart := total - limit
-	if start > maxStart {
-		return maxStart
-	}
-	return start
-}
-
-func renderGridBody(preview string, previewWidth int, list string) string {
-	previewLines := strings.Split(preview, "\n")
-	listLines := strings.Split(strings.TrimRight(list, "\n"), "\n")
-	lines := max(len(previewLines), len(listLines))
-	if lines == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	blankPreview := strings.Repeat(" ", previewWidth)
-	for i := 0; i < lines; i++ {
-		if i < len(previewLines) && previewLines[i] != "" {
-			b.WriteString(previewLines[i])
-		} else {
-			b.WriteString(blankPreview)
-		}
-		b.WriteString("  ")
-		if i < len(listLines) {
-			b.WriteString(listLines[i])
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
 }
 
 const (
@@ -1259,14 +1236,6 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 		return m.executeScan()
 	case "kitty":
 		return m.executeKittyCommand(cmd.Args)
-	case "cover":
-		m.status = "Unknown command: cover"
-	case "open":
-		m.status = "Unknown command: open"
-	case "play":
-		m.status = "Unknown command: play"
-	case "edit":
-		m.status = "Unknown command: edit"
 	case "help":
 		m.status = command.Help()
 	case "quit", "q":
@@ -1465,19 +1434,11 @@ func (m Model) executeSetPerformerRating(rating int) (tea.Model, tea.Cmd) {
 		m.status = "No performer selected"
 		return m, nil
 	}
-	if m.inPerformerGrid() {
-		m.performers[m.cursor].Rating = &rating
-	} else if m.showDetails && m.cursor >= 0 && m.cursor < len(m.result.Items) {
-		performers := m.result.Items[m.cursor].Performers
-		if m.performerCursor >= 0 && m.performerCursor < len(performers) {
-			m.result.Items[m.cursor].Performers[m.performerCursor].Rating = &rating
-		}
-	}
 	return m, func() tea.Msg {
 		if err := m.editor.SetPerformerRating(m.ctx, performer.ID, rating); err != nil {
-			return statusMsg{status: err.Error()}
+			return performerRatingMsg{performerID: performer.ID, err: err}
 		}
-		return statusMsg{status: "Performer rating updated"}
+		return performerRatingMsg{performerID: performer.ID, rating: rating}
 	}
 }
 
@@ -1491,18 +1452,49 @@ func (m Model) executeDeleteSelectedPerformer() (tea.Model, tea.Cmd) {
 		m.status = "No performer selected"
 		return m, nil
 	}
-	index := m.cursor
 	m.confirmDelete = false
-	m.performers = append(m.performers[:index], m.performers[index+1:]...)
-	if m.cursor >= len(m.performers) && m.cursor > 0 {
-		m.cursor--
-	}
-	m.gridStart = m.gridStartForCursor(m.cursor)
 	return m, func() tea.Msg {
 		if err := m.editor.DeletePerformer(m.ctx, performer.ID); err != nil {
-			return statusMsg{status: err.Error()}
+			return deletePerformerMsg{performerID: performer.ID, err: err}
 		}
-		return statusMsg{status: "Performer deleted"}
+		return deletePerformerMsg{performerID: performer.ID}
+	}
+}
+
+func (m *Model) applyPerformerRating(performerID int, rating int) {
+	for i := range m.performers {
+		if m.performers[i].ID == performerID {
+			m.performers[i].Rating = &rating
+		}
+	}
+	for sceneIndex := range m.result.Items {
+		for performerIndex := range m.result.Items[sceneIndex].Performers {
+			if m.result.Items[sceneIndex].Performers[performerIndex].ID == performerID {
+				m.result.Items[sceneIndex].Performers[performerIndex].Rating = &rating
+			}
+		}
+	}
+}
+
+func (m *Model) applyPerformerDelete(performerID int) {
+	for i, performer := range m.performers {
+		if performer.ID == performerID {
+			m.performers = append(m.performers[:i], m.performers[i+1:]...)
+			if m.cursor >= len(m.performers) && m.cursor > 0 {
+				m.cursor--
+			}
+			m.gridStart = m.gridStartForCursor(m.cursor)
+			break
+		}
+	}
+	for sceneIndex := range m.result.Items {
+		performers := m.result.Items[sceneIndex].Performers
+		for performerIndex, performer := range performers {
+			if performer.ID == performerID {
+				m.result.Items[sceneIndex].Performers = append(performers[:performerIndex], performers[performerIndex+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -1677,6 +1669,17 @@ type playMsg struct {
 	play *playState
 	item browse.SceneItem
 	err  error
+}
+
+type performerRatingMsg struct {
+	performerID int
+	rating      int
+	err         error
+}
+
+type deletePerformerMsg struct {
+	performerID int
+	err         error
 }
 
 type statusMsg struct {
