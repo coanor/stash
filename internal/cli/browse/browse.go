@@ -128,8 +128,12 @@ func (s *Service) Search(ctx context.Context, query Query) (Result, error) {
 
 		ret.Total = result.Count
 		ret.Items = make([]SceneItem, 0, len(scenes))
+		cache, err := s.newSceneItemCache(ctx, scenes)
+		if err != nil {
+			return err
+		}
 		for _, scene := range scenes {
-			item, err := s.sceneItem(ctx, scene)
+			item, err := s.sceneItem(ctx, scene, cache)
 			if err != nil {
 				return err
 			}
@@ -190,7 +194,105 @@ func (s *Service) buildSceneFilter(ctx context.Context, query Query) (*models.Sc
 	return filter, nil
 }
 
-func (s *Service) sceneItem(ctx context.Context, scene *models.Scene) (SceneItem, error) {
+type sceneItemCache struct {
+	primaryFiles         map[int]*models.VideoFile
+	performerSceneCounts map[int]int
+}
+
+func (s *Service) newSceneItemCache(ctx context.Context, scenes []*models.Scene) (*sceneItemCache, error) {
+	cache := &sceneItemCache{
+		primaryFiles:         map[int]*models.VideoFile{},
+		performerSceneCounts: map[int]int{},
+	}
+	if len(scenes) == 0 {
+		return cache, nil
+	}
+
+	sceneIDs := make([]int, 0, len(scenes))
+	for _, scene := range scenes {
+		sceneIDs = append(sceneIDs, scene.ID)
+	}
+	sceneFileIDs, err := s.repo.Scene.GetManyFileIDs(ctx, sceneIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	fileIDs := collectPrimaryFileIDs(scenes, sceneFileIDs)
+	if len(fileIDs) == 0 {
+		return cache, nil
+	}
+	files, err := s.repo.File.Find(ctx, fileIDs...)
+	if err != nil {
+		return nil, err
+	}
+
+	filesByID := map[models.FileID]*models.VideoFile{}
+	for _, file := range files {
+		video, ok := file.(*models.VideoFile)
+		if !ok {
+			continue
+		}
+		filesByID[video.ID] = video
+	}
+	for index, scene := range scenes {
+		if index >= len(sceneFileIDs) {
+			break
+		}
+		fileID, ok := primaryFileID(scene, sceneFileIDs[index])
+		if !ok {
+			continue
+		}
+		if file := filesByID[fileID]; file != nil {
+			cache.primaryFiles[scene.ID] = file
+		}
+	}
+
+	return cache, nil
+}
+
+func collectPrimaryFileIDs(scenes []*models.Scene, sceneFileIDs [][]models.FileID) []models.FileID {
+	seen := map[models.FileID]struct{}{}
+	var ret []models.FileID
+	for index, scene := range scenes {
+		if index >= len(sceneFileIDs) {
+			break
+		}
+		fileID, ok := primaryFileID(scene, sceneFileIDs[index])
+		if !ok {
+			continue
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		ret = append(ret, fileID)
+	}
+	return ret
+}
+
+func primaryFileID(scene *models.Scene, fileIDs []models.FileID) (models.FileID, bool) {
+	if scene.PrimaryFileID != nil {
+		return *scene.PrimaryFileID, true
+	}
+	if len(fileIDs) > 0 {
+		return fileIDs[0], true
+	}
+	return 0, false
+}
+
+func (c *sceneItemCache) performerSceneCount(ctx context.Context, repo models.Repository, performerID int) (int, error) {
+	if count, ok := c.performerSceneCounts[performerID]; ok {
+		return count, nil
+	}
+	count, err := repo.Scene.CountByPerformerID(ctx, performerID)
+	if err != nil {
+		return 0, err
+	}
+	c.performerSceneCounts[performerID] = count
+	return count, nil
+}
+
+func (s *Service) sceneItem(ctx context.Context, scene *models.Scene, cache *sceneItemCache) (SceneItem, error) {
 	item := SceneItem{
 		ID:        scene.ID,
 		Title:     scene.GetTitle(),
@@ -202,12 +304,18 @@ func (s *Service) sceneItem(ctx context.Context, scene *models.Scene) (SceneItem
 		item.Date = scene.Date.String()
 	}
 
-	if err := scene.LoadPrimaryFile(ctx, s.repo.File); err != nil {
-		return SceneItem{}, err
-	}
-	if primary := scene.Files.Primary(); primary != nil {
+	if primary := cache.primaryFiles[scene.ID]; primary != nil {
+		scene.Files.Set([]*models.VideoFile{primary})
 		item.Path = primary.Path
 		item.Duration = primary.Duration
+	} else {
+		if err := scene.LoadPrimaryFile(ctx, s.repo.File); err != nil {
+			return SceneItem{}, err
+		}
+		if primary := scene.Files.Primary(); primary != nil {
+			item.Path = primary.Path
+			item.Duration = primary.Duration
+		}
 	}
 
 	studio, err := s.repo.Studio.FindBySceneID(ctx, scene.ID)
@@ -223,7 +331,7 @@ func (s *Service) sceneItem(ctx context.Context, scene *models.Scene) (SceneItem
 		return SceneItem{}, err
 	}
 	for _, performer := range performers {
-		sceneCount, err := s.repo.Scene.CountByPerformerID(ctx, performer.ID)
+		sceneCount, err := cache.performerSceneCount(ctx, s.repo, performer.ID)
 		if err != nil {
 			return SceneItem{}, err
 		}
