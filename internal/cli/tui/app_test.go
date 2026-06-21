@@ -1021,10 +1021,71 @@ func TestCommandCompletionMatchesRenderInFooter(t *testing.T) {
 	}
 }
 
+func TestCommandFooterVisibleInDetailsView(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 14
+	model.showDetails = true
+	model.commandMode = true
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:         42,
+			Title:      "Scene",
+			Path:       "/tmp/scene.mp4",
+			Performers: makePerformerItems(12),
+		}},
+	}
+
+	view := model.View().Content
+	if !strings.Contains(view, "\n:") {
+		t.Fatalf("command input is not visible: %q", view)
+	}
+	if lines := strings.Count(view, "\n") + 1; lines > model.height {
+		t.Fatalf("view height = %d, want <= %d\n%s", lines, model.height, view)
+	}
+}
+
+func TestColonOpensCommandFooterFromDetailsView(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 14
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:         42,
+			Title:      "Scene",
+			Path:       "/tmp/scene.mp4",
+			Performers: makePerformerItems(12),
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: ":"})
+	m = next.(Model)
+
+	if !m.commandMode {
+		t.Fatal("expected command mode after : in details view")
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "\n:") {
+		t.Fatalf("command input is not visible: %q", view)
+	}
+}
+
 func makeSceneItems(n int) []browse.SceneItem {
 	items := make([]browse.SceneItem, n)
 	for i := range items {
 		items[i] = browse.SceneItem{ID: 100 + i, Title: "Scene"}
+	}
+	return items
+}
+
+func makePerformerItems(n int) []browse.PerformerItem {
+	items := make([]browse.PerformerItem, n)
+	for i := range items {
+		items[i] = browse.PerformerItem{ID: 200 + i, Name: "Performer"}
 	}
 	return items
 }

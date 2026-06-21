@@ -338,8 +338,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() tea.View {
-	var b strings.Builder
+	content := m.renderContent()
+	footer := m.renderFooter()
+	if footer != "" {
+		content = trimLines(content, m.height-lipgloss.Height(footer)-1)
+		if content != "" {
+			content += "\n"
+		}
+		content += "\n" + footer
+	}
 
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
+}
+
+func (m Model) renderContent() string {
+	var b strings.Builder
 	if m.inPerformerGrid() {
 		if len(m.performers) == 0 {
 			b.WriteString("No performers to display\n")
@@ -358,20 +373,34 @@ func (m Model) View() tea.View {
 		b.WriteString(m.renderSceneGrid())
 	}
 
-	b.WriteString("\n")
-	if m.commandMode {
-		if matches := m.commandCompletionMatches(); len(matches) > 0 {
-			b.WriteString(lipgloss.NewStyle().Faint(true).Render("matches: " + strings.Join(matches, " ")))
-			b.WriteString("\n")
-		}
-		b.WriteString(lipgloss.NewStyle().Faint(true).Render(command.Help()))
-		b.WriteString("\n:")
-		b.WriteString(m.input)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m Model) renderFooter() string {
+	if !m.commandMode {
+		return ""
 	}
 
-	view := tea.NewView(b.String())
-	view.AltScreen = true
-	return view
+	var b strings.Builder
+	if matches := m.commandCompletionMatches(); len(matches) > 0 {
+		b.WriteString(lipgloss.NewStyle().Faint(true).Render("matches: " + strings.Join(matches, " ")))
+		b.WriteString("\n")
+	}
+	b.WriteString(lipgloss.NewStyle().Faint(true).Render(command.Help()))
+	b.WriteString("\n:")
+	b.WriteString(m.input)
+	return b.String()
+}
+
+func trimLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[:maxLines], "\n")
 }
 
 const (
@@ -387,6 +416,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.String() == "esc" {
 		return m.goBack()
+	}
+	if msg.String() == ":" {
+		m.beginCommandMode()
+		return m, nil
 	}
 	if m.confirmDelete {
 		return m.handleDeleteConfirmKey(msg)
@@ -521,9 +554,7 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case ":":
-		m.commandMode = true
-		m.input = ""
-		m.clearCompletion()
+		m.beginCommandMode()
 	case "enter":
 		if m.inPerformerGrid() {
 			return m, nil
@@ -548,6 +579,12 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) beginCommandMode() {
+	m.commandMode = true
+	m.input = ""
+	m.clearCompletion()
 }
 
 func (m Model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
