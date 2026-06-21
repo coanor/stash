@@ -23,7 +23,7 @@ import (
 func main() {
 	initLog("", false, "error")
 
-	configPath := pflag.StringP("config", "c", "", "path to config.toml")
+	configPath := pflag.StringP("config", "c", config.DefaultPath(), "path to config.toml")
 	printConfig := pflag.Bool("print-config", false, "print an example config.toml")
 	check := pflag.Bool("check", false, "validate config and database, then exit")
 	help := pflag.BoolP("help", "h", false, "show this help text and exit")

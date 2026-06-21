@@ -6,10 +6,13 @@
 
 ```bash
 make stash-cli
-go run ./cmd/stash-cli --print-config
-go run ./cmd/stash-cli --config ~/.config/stash-cli/config.toml --check
-go run ./cmd/stash-cli --config ~/.config/stash-cli/config.toml
+mkdir -p ~/.config/stash-cli
+go run ./cmd/stash-cli --print-config > ~/.config/stash-cli/config.toml
+go run ./cmd/stash-cli --check
+go run ./cmd/stash-cli
 ```
+
+`stash-cli` 默认读取 `~/.config/stash-cli/config.toml`（按系统 `UserConfigDir` 解析）。只有需要临时使用其他配置文件时，才传 `-c/--config <path>`。
 
 `--check` 只验证配置和数据库，并在启用 `scan_on_startup` 时执行启动扫描；不进入 TUI。
 
@@ -67,6 +70,7 @@ scene 网格卡片显示封面、标题、至少一名 performer，以及短元�
 - `delete`：删除当前选中的 scene 或 performer；需要再按 `y` 确认。
 - `clear`：清除搜索条件。
 - `scan`：按配置的 `media_dirs` 扫描本地或已挂载的远程目录。
+- `kitty`：在当前会话内切换 graphics mode；再次执行会在 `auto` 和强制 `kitty` 之间切换。
 - `help`：显示命令列表。
 - `:q`：退出。
 

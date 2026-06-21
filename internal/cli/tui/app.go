@@ -1266,6 +1266,8 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 		return m, m.loadVisibleCovers()
 	case "scan":
 		return m.executeScan()
+	case "kitty":
+		return m.executeKittyCommand(cmd.Args)
 	case "cover":
 		m.status = "Unknown command: cover"
 	case "open":
@@ -1283,6 +1285,27 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) executeKittyCommand(args []string) (tea.Model, tea.Cmd) {
+	if len(args) != 0 {
+		m.status = "Usage: kitty"
+		return m, nil
+	}
+
+	if m.forceKitty {
+		picture.ForceKittyCapability(picture.KittyCapabilityUnknown)
+		m.forceKitty = false
+		m.status = "Graphics mode: auto"
+		logger.Infof("[stash-cli] graphics mode switched: force_kitty=false render_mode=%s kitty=%s", pictureModeString(m.pic.Mode()), kittyCapabilityString(picture.KittySupported()))
+		return m, tea.Batch(m.setPicturesMode(picture.PictureGlyph), m.pic.Init())
+	}
+
+	picture.ForceKittyCapability(picture.KittyCapabilitySupported)
+	m.forceKitty = true
+	m.status = "Graphics mode: kitty"
+	logger.Infof("[stash-cli] graphics mode switched: force_kitty=true render_mode=%s kitty=%s", pictureModeString(m.pic.Mode()), kittyCapabilityString(picture.KittySupported()))
+	return m, m.setPicturesMode(picture.PictureKitty)
 }
 
 func (m *Model) returnToSceneGrid() {
@@ -1987,6 +2010,31 @@ func (m *Model) updatePictures(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) setPicturesMode(mode picture.PictureMode) tea.Cmd {
+	var cmds []tea.Cmd
+	if cmd := setPictureMode(&m.pic, mode); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	for _, gridPic := range m.gridPics {
+		if cmd := setPictureMode(&gridPic.pic, mode); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	for _, performerPic := range m.performerPics {
+		if cmd := setPictureMode(&performerPic.pic, mode); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+func setPictureMode(pic *picture.Model, mode picture.PictureMode) tea.Cmd {
+	if pic == nil || pic.Mode() == mode {
+		return nil
+	}
+	return pic.Toggle()
 }
 
 func (m Model) gridPicMode(sceneID int) picture.PictureMode {

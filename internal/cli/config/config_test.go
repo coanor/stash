@@ -57,6 +57,17 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultPathUsesUserConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+
+	got := DefaultPath()
+	want := filepath.Join(configDir, "stash-cli", "config.toml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadConfigCanSetFFplayCommand(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	err := os.WriteFile(configPath, []byte(`

@@ -812,6 +812,47 @@ func TestScanCommandRunsScannerAndRefreshesResults(t *testing.T) {
 	}
 }
 
+func TestKittyCommandTogglesForcedKittyMode(t *testing.T) {
+	picture.ForceKittyCapability(picture.KittyCapabilityUnsupported)
+	t.Cleanup(func() { picture.ForceKittyCapability(picture.KittyCapabilitySupported) })
+
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.input = "kitty"
+
+	next, _ := model.executeInput()
+	m := next.(Model)
+
+	if !m.forceKitty {
+		t.Fatal("forceKitty = false, want true")
+	}
+	if m.pic.Mode() != picture.PictureKitty {
+		t.Fatalf("mode = %v, want kitty", m.pic.Mode())
+	}
+	if got := picture.KittySupported(); got != picture.KittyCapabilitySupported {
+		t.Fatalf("KittySupported = %v, want supported", got)
+	}
+	if m.status != "Graphics mode: kitty" {
+		t.Fatalf("status = %q", m.status)
+	}
+
+	m.input = "kitty"
+	next, _ = m.executeInput()
+	m = next.(Model)
+
+	if m.forceKitty {
+		t.Fatal("forceKitty = true, want false")
+	}
+	if m.pic.Mode() != picture.PictureGlyph {
+		t.Fatalf("mode = %v, want glyph", m.pic.Mode())
+	}
+	if got := picture.KittySupported(); got != picture.KittyCapabilityUnknown {
+		t.Fatalf("KittySupported = %v, want unknown", got)
+	}
+	if m.status != "Graphics mode: auto" {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
 func TestNormalEnterPlaysSelectedScene(t *testing.T) {
 	player := &fakePlayer{}
 	model := NewWithDeps(context.Background(), Deps{

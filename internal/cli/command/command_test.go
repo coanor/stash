@@ -38,3 +38,12 @@ func TestCompletableCommandsIncludeDefault(t *testing.T) {
 	}
 	t.Fatal("default command should be completable")
 }
+
+func TestCompletableCommandsIncludeKitty(t *testing.T) {
+	for _, name := range CompletableCommands() {
+		if name == "kitty" {
+			return
+		}
+	}
+	t.Fatal("kitty command should be completable")
+}
