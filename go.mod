@@ -6,7 +6,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/99designs/gqlgen v0.17.73
-	github.com/NimbleMarkets/ntcharts/v2 v2.2.0
+	github.com/NimbleMarkets/ntcharts/v2 v2.2.1-0.20260604200804-af34871be8d4
 	github.com/WithoutPants/sortorder v0.0.0-20230616003020-921c9ef69552
 	github.com/Yamashou/gqlgenc v0.32.1
 	github.com/anacrolix/dms v1.2.2
