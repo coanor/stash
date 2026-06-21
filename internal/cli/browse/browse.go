@@ -33,9 +33,14 @@ type SceneItem struct {
 }
 
 type PerformerItem struct {
-	ID     int
-	Name   string
-	Rating *int
+	ID          int
+	Name        string
+	Rating      *int
+	BirthYear   *int
+	HeightCm    *int
+	CareerStart *int
+	CareerEnd   *int
+	SceneCount  *int
 }
 
 type Result struct {
@@ -218,10 +223,19 @@ func (s *Service) sceneItem(ctx context.Context, scene *models.Scene) (SceneItem
 		return SceneItem{}, err
 	}
 	for _, performer := range performers {
+		sceneCount, err := s.repo.Scene.CountByPerformerID(ctx, performer.ID)
+		if err != nil {
+			return SceneItem{}, err
+		}
 		item.Performers = append(item.Performers, PerformerItem{
-			ID:     performer.ID,
-			Name:   performer.Name,
-			Rating: performer.Rating,
+			ID:          performer.ID,
+			Name:        performer.Name,
+			Rating:      performer.Rating,
+			BirthYear:   modelDateYear(performer.Birthdate),
+			HeightCm:    performer.Height,
+			CareerStart: modelDateYear(performer.CareerStart),
+			CareerEnd:   modelDateYear(performer.CareerEnd),
+			SceneCount:  &sceneCount,
 		})
 	}
 
@@ -234,4 +248,12 @@ func (s *Service) sceneItem(ctx context.Context, scene *models.Scene) (SceneItem
 	}
 
 	return item, nil
+}
+
+func modelDateYear(date *models.Date) *int {
+	if date == nil {
+		return nil
+	}
+	year := date.Year()
+	return &year
 }

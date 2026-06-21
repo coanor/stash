@@ -42,6 +42,10 @@ type CoverLoader interface {
 	Load(context.Context, cover.Request) (cover.Cover, error)
 }
 
+type PerformerImageLoader interface {
+	LoadPerformer(context.Context, int) (cover.Cover, error)
+}
+
 type Player interface {
 	Play(context.Context, browse.SceneItem) error
 }
@@ -70,38 +74,57 @@ const (
 )
 
 type Model struct {
-	ctx        context.Context
-	browser    Browser
-	editor     Editor
-	covers     CoverLoader
-	player     Player
-	scanner    Scanner
-	pic        picture.Model
-	gridPics   map[int]*gridCover
-	forceKitty bool
+	ctx             context.Context
+	browser         Browser
+	editor          Editor
+	covers          CoverLoader
+	performerImages PerformerImageLoader
+	player          Player
+	scanner         Scanner
+	pic             picture.Model
+	gridPics        map[int]*gridCover
+	performerPics   map[int]*gridCover
+	forceKitty      bool
 
-	mode              ViewMode
-	grid              gridKind
-	query             browse.Query
-	result            browse.Result
-	performers        []browse.PerformerItem
-	sceneCursor       int
-	sceneGridStart    int
-	cursor            int
-	gridStart         int
-	input             string
-	commandMode       bool
-	completionQuery   string
-	completionMatches []string
-	completionIndex   int
-	showDetails       bool
-	performerCursor   int
-	confirmDelete     bool
-	status            string
-	scan              *scanState
-	play              *playState
-	width             int
-	height            int
+	mode                 ViewMode
+	grid                 gridKind
+	query                browse.Query
+	result               browse.Result
+	performers           []browse.PerformerItem
+	sceneCursor          int
+	sceneGridStart       int
+	cursor               int
+	gridStart            int
+	input                string
+	commandMode          bool
+	completionQuery      string
+	completionMatches    []string
+	completionIndex      int
+	showDetails          bool
+	showPerformerDetails bool
+	performerCursor      int
+	confirmDelete        bool
+	previousView         *viewSnapshot
+	status               string
+	scan                 *scanState
+	play                 *playState
+	width                int
+	height               int
+}
+
+type viewSnapshot struct {
+	grid                 gridKind
+	query                browse.Query
+	result               browse.Result
+	performers           []browse.PerformerItem
+	sceneCursor          int
+	sceneGridStart       int
+	cursor               int
+	gridStart            int
+	showDetails          bool
+	showPerformerDetails bool
+	performerCursor      int
+	status               string
 }
 
 type gridCoverState int
@@ -120,12 +143,13 @@ type gridCover struct {
 }
 
 type Deps struct {
-	Browser    Browser
-	Editor     Editor
-	Covers     CoverLoader
-	Player     Player
-	Scanner    Scanner
-	ForceKitty bool
+	Browser         Browser
+	Editor          Editor
+	Covers          CoverLoader
+	PerformerImages PerformerImageLoader
+	Player          Player
+	Scanner         Scanner
+	ForceKitty      bool
 }
 
 func New(ctx context.Context, browser Browser, mode ViewMode, editors ...Editor) Model {
@@ -155,18 +179,20 @@ func NewWithDeps(ctx context.Context, deps Deps, mode ViewMode) Model {
 	logger.Infof("[stash-cli] tui graphics initialized: view_mode=%s force_kitty=%t render_mode=%s kitty=%s", mode, deps.ForceKitty, pictureModeString(pic.Mode()), kittyCapabilityString(picture.KittySupported()))
 
 	return Model{
-		ctx:        ctx,
-		browser:    deps.Browser,
-		editor:     deps.Editor,
-		covers:     deps.Covers,
-		player:     deps.Player,
-		scanner:    deps.Scanner,
-		pic:        pic,
-		gridPics:   map[int]*gridCover{},
-		forceKitty: deps.ForceKitty,
-		mode:       mode,
-		grid:       gridScenes,
-		status:     "Press : for commands",
+		ctx:             ctx,
+		browser:         deps.Browser,
+		editor:          deps.Editor,
+		covers:          deps.Covers,
+		performerImages: deps.PerformerImages,
+		player:          deps.Player,
+		scanner:         deps.Scanner,
+		pic:             pic,
+		gridPics:        map[int]*gridCover{},
+		performerPics:   map[int]*gridCover{},
+		forceKitty:      deps.ForceKitty,
+		mode:            mode,
+		grid:            gridScenes,
+		status:          "Press : for commands",
 		query: browse.Query{
 			Page:    1,
 			PerPage: 40,
@@ -267,6 +293,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := m.pic.SetImage(msg.image)
 		return m, m.ensureKitty(cmd)
+	case performerImageMsg:
+		performerPic := m.performerPic(msg.performerID)
+		if msg.err != nil {
+			performerPic.state = gridCoverFailed
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		if msg.image == nil {
+			performerPic.state = gridCoverEmpty
+			return m, nil
+		}
+		performerPic.state = gridCoverReady
+		return m, m.ensureKitty(performerPic.pic.SetImage(msg.image))
 	case playMsg:
 		if msg.play != nil {
 			msg.play.setDone()
@@ -287,9 +326,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() tea.View {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Render("stash-cli")
-	fmt.Fprintf(&b, "%s\n", title)
-	fmt.Fprintf(&b, "%s\n\n", m.status)
 
 	if m.inPerformerGrid() {
 		if len(m.performers) == 0 {
@@ -297,6 +333,9 @@ func (m Model) View() tea.View {
 		} else {
 			b.WriteString(m.renderPerformerGrid())
 		}
+	} else if m.showPerformerDetails {
+		b.WriteString(m.renderSelectedPerformerDetails())
+		b.WriteString("\n")
 	} else if m.showDetails {
 		b.WriteString(m.renderSelectedDetails())
 		b.WriteString("\n")
@@ -315,8 +354,6 @@ func (m Model) View() tea.View {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Render(command.Help()))
 		b.WriteString("\n:")
 		b.WriteString(m.input)
-	} else {
-		b.WriteString(lipgloss.NewStyle().Faint(true).Render("h/j/k/l browse, enter play, space details, : command, :q quit"))
 	}
 
 	view := tea.NewView(b.String())
@@ -371,6 +408,9 @@ const (
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.commandMode {
 		return m.handleCommandKey(msg)
+	}
+	if msg.String() == "esc" {
+		return m.goBack()
 	}
 	if m.confirmDelete {
 		return m.handleDeleteConfirmKey(msg)
@@ -504,8 +544,6 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc":
-		m.showDetails = false
 	case ":":
 		m.commandMode = true
 		m.input = ""
@@ -518,6 +556,10 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case " ", "space":
 		if !m.inPerformerGrid() {
 			m.showDetails = !m.showDetails
+			m.performerCursor = 0
+			if m.showDetails {
+				return m, m.loadVisiblePerformerImages()
+			}
 		}
 	case "up", "k":
 		return m.moveCursor(-gridColumns(m.width))
@@ -536,14 +578,60 @@ func (m Model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", " ", "space":
-		m.showDetails = false
-	case "j", "down":
-		m.movePerformerCursor(1)
-	case "k", "up":
+	case " ", "space":
+		if _, ok := m.selectedPerformer(); ok {
+			m.showPerformerDetails = true
+		}
+	case "enter":
+		return m.executeSelectedPerformerScenes()
+	case "h", "left":
 		m.movePerformerCursor(-1)
+		return m, m.loadVisiblePerformerImages()
+	case "l", "right":
+		m.movePerformerCursor(1)
+		return m, m.loadVisiblePerformerImages()
+	case "j", "down":
+		m.movePerformerCursor(gridColumns(m.width))
+		return m, m.loadVisiblePerformerImages()
+	case "k", "up":
+		m.movePerformerCursor(-gridColumns(m.width))
+		return m, m.loadVisiblePerformerImages()
 	}
 
+	return m, nil
+}
+
+func (m Model) goBack() (tea.Model, tea.Cmd) {
+	if m.confirmDelete {
+		m.confirmDelete = false
+		m.status = "Delete cancelled"
+		return m, nil
+	}
+	if m.showPerformerDetails {
+		m.showPerformerDetails = false
+		m.showDetails = true
+		return m, nil
+	}
+	if m.showDetails {
+		m.showDetails = false
+		return m, nil
+	}
+	if m.inPerformerGrid() {
+		m.grid = gridScenes
+		m.performers = nil
+		m.cursor = m.sceneCursor
+		m.gridStart = m.sceneGridStart
+		m.status = fmt.Sprintf("%d results", m.result.Total)
+		return m, m.loadVisibleCovers()
+	}
+	if m.previousView != nil {
+		m.restoreSnapshot(m.previousView)
+		m.previousView = nil
+		if m.showDetails {
+			return m, m.loadVisiblePerformerImages()
+		}
+		return m, m.loadVisibleCovers()
+	}
 	return m, nil
 }
 
@@ -762,16 +850,15 @@ func (m Model) renderSceneTile(index int, item browse.SceneItem) string {
 		}
 	}
 
-	meta := compactText(item.Title, gridTileWidth-4)
 	performer := compactText(performerSummary(item.Performers), gridTileWidth-4)
 	details := compactText(formatSceneSummary(item), gridTileWidth-4)
 
-	return style.Render(strings.Join([]string{
+	rendered := style.Render(strings.Join([]string{
 		fitBlock(coverView, gridTileWidth-4, gridCoverRows),
-		meta,
 		performer,
 		details,
-	}, "\n")) + strings.Repeat(" ", gridTileGap)
+	}, "\n"))
+	return addTileBorderTitle(rendered, item.Title, selected) + strings.Repeat(" ", gridTileGap)
 }
 
 func (m Model) renderPerformerGrid() string {
@@ -791,7 +878,7 @@ func (m Model) renderPerformerGrid() string {
 		}
 		var tiles []string
 		for i := rowStart; i < rowEnd; i++ {
-			tiles = append(tiles, m.renderPerformerTile(i, m.performers[i]))
+			tiles = append(tiles, m.renderPerformerTile(i, m.performers[i], i == m.cursor))
 		}
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, tiles...))
 		b.WriteString("\n")
@@ -800,8 +887,7 @@ func (m Model) renderPerformerGrid() string {
 	return b.String()
 }
 
-func (m Model) renderPerformerTile(index int, item browse.PerformerItem) string {
-	selected := index == m.cursor
+func (m Model) renderPerformerTile(index int, item browse.PerformerItem, selected bool) string {
 	style := lipgloss.NewStyle().
 		Width(gridTileWidth).
 		Height(gridTileRows).
@@ -813,11 +899,45 @@ func (m Model) renderPerformerTile(index int, item browse.PerformerItem) string 
 		style = style.BorderForeground(lipgloss.Color("8"))
 	}
 
-	return style.Render(strings.Join([]string{
-		fitBlock("[performer]", gridTileWidth-4, gridCoverRows),
-		compactText(item.Name, gridTileWidth-4),
+	imageView := ""
+	if performerPic, ok := m.performerPics[item.ID]; ok {
+		switch performerPic.state {
+		case gridCoverReady:
+			imageView = fitBlock(performerPic.pic.View().Content, gridTileWidth-4, gridCoverRows)
+		case gridCoverEmpty:
+			imageView = ""
+		case gridCoverFailed:
+			imageView = "[image error]"
+		default:
+			imageView = ""
+		}
+	}
+
+	lines := []string{
+		fitBlock(imageView, gridTileWidth-4, gridCoverRows),
 		"rating: " + formatRating(item.Rating),
-	}, "\n")) + strings.Repeat(" ", gridTileGap)
+	}
+	lines = append(lines, m.performerMetadataLines(item)...)
+
+	rendered := style.Render(strings.Join(lines, "\n"))
+	return addTileBorderTitle(rendered, item.Name, selected) + strings.Repeat(" ", gridTileGap)
+}
+
+func addTileBorderTitle(rendered, titleText string, selected bool) string {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		return rendered
+	}
+
+	titleWidth := gridTileWidth - 2
+	title := compactText(titleText, titleWidth)
+	top := "┌" + title + strings.Repeat("─", titleWidth-lipgloss.Width(title)) + "┐"
+	color := lipgloss.Color("8")
+	if selected {
+		color = lipgloss.Color("12")
+	}
+	lines[0] = lipgloss.NewStyle().Foreground(color).Render(top)
+	return strings.Join(lines, "\n")
 }
 
 func performerSummary(performers []browse.PerformerItem) string {
@@ -830,31 +950,82 @@ func performerSummary(performers []browse.PerformerItem) string {
 	return fmt.Sprintf("%s <%d omitted>", performers[0].Name, len(performers)-1)
 }
 
+func (m Model) performerMetadataLines(item browse.PerformerItem) []string {
+	var meta []string
+	if item.BirthYear != nil {
+		meta = append(meta, fmt.Sprintf("birth: %s", shortYear(*item.BirthYear)))
+	}
+	if item.HeightCm != nil {
+		meta = append(meta, fmt.Sprintf("height: %d", *item.HeightCm))
+	}
+	if age, ok := m.performerAgeAtProduction(item); ok {
+		meta = append(meta, fmt.Sprintf("age: %d", age))
+	}
+	if career := formatCareerYears(item.CareerStart, item.CareerEnd); career != "" {
+		meta = append(meta, "career: "+career)
+	}
+	if item.SceneCount != nil {
+		meta = append(meta, fmt.Sprintf("scenes: %d", *item.SceneCount))
+	}
+
+	var lines []string
+	for i := 0; i < len(meta); i += 2 {
+		left := meta[i]
+		right := ""
+		if i+1 < len(meta) {
+			right = meta[i+1]
+		}
+		lines = append(lines, fmt.Sprintf("%-12s %s", compactText(left, 12), compactText(right, 12)))
+	}
+	return lines
+}
+
+func (m Model) performerAgeAtProduction(item browse.PerformerItem) (int, bool) {
+	if item.BirthYear == nil {
+		return 0, false
+	}
+	scene, ok := m.selectedItem()
+	if !ok {
+		return 0, false
+	}
+	year := sceneYear(scene.Date)
+	if year == "" {
+		return 0, false
+	}
+	productionYear, err := strconv.Atoi(year)
+	if err != nil || productionYear < *item.BirthYear {
+		return 0, false
+	}
+	return productionYear - *item.BirthYear, true
+}
+
+func shortYear(year int) string {
+	if year < 0 {
+		year = -year
+	}
+	return fmt.Sprintf("%02d", year%100)
+}
+
+func formatCareerYears(start, end *int) string {
+	if start == nil && end == nil {
+		return ""
+	}
+	if start == nil {
+		return "-" + shortYear(*end)
+	}
+	if end == nil {
+		return shortYear(*start) + "-"
+	}
+	return shortYear(*start) + "-" + shortYear(*end)
+}
+
 func (m Model) renderSelectedDetails() string {
 	item, ok := m.selectedItem()
 	if !ok {
 		return ""
 	}
 
-	lines := []string{
-		"Title: " + item.Title,
-		"Path: " + item.Path,
-		"Rating: " + formatRating(item.Rating),
-	}
-	if item.Duration > 0 {
-		lines = append(lines, "Duration: "+formatDuration(item.Duration))
-	}
-	if year := sceneYear(item.Date); year != "" {
-		lines = append(lines, "Year: "+year)
-	}
-	if item.Studio != "" {
-		lines = append(lines, "Studio: "+item.Studio)
-	}
-	if len(item.Tags) > 0 {
-		lines = append(lines, "Tags: "+strings.Join(item.Tags, ", "))
-	}
-	lines = append(lines, "Performers:")
-	lines = append(lines, m.renderPerformerDetails(item.Performers)...)
+	lines := []string{m.renderSceneInfoColumns(item)}
 	if m.confirmDelete {
 		lines = append(lines, "Delete scene? y/N")
 	}
@@ -864,6 +1035,49 @@ func (m Model) renderSelectedDetails() string {
 		width = 60
 	}
 
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Padding(0, 1).
+		Width(width).
+		Render(strings.Join(lines, "\n"))
+
+	if len(item.Performers) == 0 {
+		return panel + "\nNo performers to display"
+	}
+	return panel + "\n" + m.renderScenePerformerGrid(item.Performers)
+}
+
+func (m Model) renderSelectedPerformerDetails() string {
+	performer, ok := m.selectedPerformer()
+	if !ok {
+		return ""
+	}
+
+	lines := []string{
+		"Name: " + performer.Name,
+		"Rating: " + formatRating(performer.Rating),
+	}
+	if performer.BirthYear != nil {
+		lines = append(lines, "Birth: "+shortYear(*performer.BirthYear))
+	}
+	if performer.HeightCm != nil {
+		lines = append(lines, fmt.Sprintf("Height: %d", *performer.HeightCm))
+	}
+	if age, ok := m.performerAgeAtProduction(performer); ok {
+		lines = append(lines, fmt.Sprintf("Age: %d", age))
+	}
+	if career := formatCareerYears(performer.CareerStart, performer.CareerEnd); career != "" {
+		lines = append(lines, "Career: "+career)
+	}
+	if performer.SceneCount != nil {
+		lines = append(lines, fmt.Sprintf("Scenes: %d", *performer.SceneCount))
+	}
+
+	width := m.width - 2
+	if width < 60 {
+		width = 60
+	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("8")).
@@ -872,10 +1086,49 @@ func (m Model) renderSelectedDetails() string {
 		Render(strings.Join(lines, "\n"))
 }
 
-func (m Model) renderPerformerDetails(performers []browse.PerformerItem) []string {
-	if len(performers) == 0 {
-		return []string{"  No performers"}
+func (m Model) renderSceneInfoColumns(item browse.SceneItem) string {
+	fields := []string{
+		"Title: " + item.Title,
+		"Rating: " + formatRating(item.Rating),
 	}
+	if item.Path != "" {
+		fields = append(fields, "Path: "+item.Path)
+	}
+	if item.Duration > 0 {
+		fields = append(fields, "Duration: "+formatDuration(item.Duration))
+	}
+	if year := sceneYear(item.Date); year != "" {
+		fields = append(fields, "Year: "+year)
+	}
+	if item.Studio != "" {
+		fields = append(fields, "Studio: "+item.Studio)
+	}
+	if len(item.Tags) > 0 {
+		fields = append(fields, "Tags: "+strings.Join(item.Tags, ", "))
+	}
+
+	width := m.width - 6
+	if width < 54 {
+		width = 54
+	}
+	colWidth := width / 2
+	if colWidth < 24 {
+		colWidth = 24
+	}
+
+	lines := make([]string, 0, (len(fields)+1)/2)
+	for i := 0; i < len(fields); i += 2 {
+		left := compactText(fields[i], colWidth-2)
+		right := ""
+		if i+1 < len(fields) {
+			right = compactText(fields[i+1], colWidth-2)
+		}
+		lines = append(lines, fmt.Sprintf("%-*s  %s", colWidth, left, right))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderScenePerformerGrid(performers []browse.PerformerItem) string {
 	cursor := m.performerCursor
 	if cursor < 0 {
 		cursor = 0
@@ -883,16 +1136,48 @@ func (m Model) renderPerformerDetails(performers []browse.PerformerItem) []strin
 	if cursor >= len(performers) {
 		cursor = len(performers) - 1
 	}
+	visible := visiblePerformers(performers, cursor, m.width, m.height)
 
-	lines := make([]string, 0, len(performers))
-	for i, performer := range performers {
-		prefix := "  "
-		if i == cursor {
-			prefix = "> "
+	var b strings.Builder
+	cols := gridColumns(m.width)
+	for rowStart := 0; rowStart < len(visible); rowStart += cols {
+		rowEnd := rowStart + cols
+		if rowEnd > len(visible) {
+			rowEnd = len(visible)
 		}
-		lines = append(lines, fmt.Sprintf("%s%s rating:%s", prefix, performer.Name, formatRating(performer.Rating)))
+		var tiles []string
+		for i := rowStart; i < rowEnd; i++ {
+			performer := visible[i]
+			tiles = append(tiles, m.renderPerformerTile(i, performer, performer.ID == performers[cursor].ID))
+		}
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, tiles...))
+		b.WriteString("\n")
 	}
-	return lines
+
+	return b.String()
+}
+
+func visiblePerformers(performers []browse.PerformerItem, cursor, width, height int) []browse.PerformerItem {
+	if len(performers) == 0 {
+		return nil
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(performers) {
+		cursor = len(performers) - 1
+	}
+	cols := gridColumns(width)
+	rows := visibleGridRows(height) - 1
+	if rows < 1 {
+		rows = 1
+	}
+	start := visibleGridStart(cursor, len(performers), cols, rows)
+	end := start + cols*rows
+	if end > len(performers) {
+		end = len(performers)
+	}
+	return performers[start:end]
 }
 
 func formatRating(rating *int) string {
@@ -949,19 +1234,26 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 
 	switch cmd.Name {
 	case "search":
+		m.returnToSceneGrid()
+		m.clearNavigationHistory()
 		m.query = browse.ParseQuery(strings.Join(cmd.Args, " "))
 		return m, m.refresh()
 	case "random":
+		m.returnToSceneGrid()
+		m.clearNavigationHistory()
 		return m.executeRandom(cmd.Args)
 	case "rating":
 		return m.executeRatingCommand(cmd.Args)
-	case "performers":
-		return m.executePerformersCommand(cmd.Args)
-	case "back":
-		return m.executeBackCommand(cmd.Args)
 	case "delete":
 		return m.executeDeleteCommand(cmd.Args)
 	case "clear":
+		m.returnToSceneGrid()
+		m.clearNavigationHistory()
+		m.query = browse.Query{Page: 1, PerPage: 40}
+		return m, m.refresh()
+	case "default":
+		m.returnToSceneGrid()
+		m.clearNavigationHistory()
 		m.query = browse.Query{Page: 1, PerPage: 40}
 		return m, m.refresh()
 	case "view":
@@ -993,6 +1285,63 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) returnToSceneGrid() {
+	m.grid = gridScenes
+	m.performers = nil
+	m.showDetails = false
+	m.showPerformerDetails = false
+	m.confirmDelete = false
+	m.cursor = m.sceneCursorIfValid()
+	m.gridStart = m.gridStartForCursor(m.cursor)
+}
+
+func (m *Model) clearNavigationHistory() {
+	m.previousView = nil
+}
+
+func (m Model) snapshot() *viewSnapshot {
+	return &viewSnapshot{
+		grid:                 m.grid,
+		query:                m.query,
+		result:               m.result,
+		performers:           append([]browse.PerformerItem(nil), m.performers...),
+		sceneCursor:          m.sceneCursor,
+		sceneGridStart:       m.sceneGridStart,
+		cursor:               m.cursor,
+		gridStart:            m.gridStart,
+		showDetails:          m.showDetails,
+		showPerformerDetails: m.showPerformerDetails,
+		performerCursor:      m.performerCursor,
+		status:               m.status,
+	}
+}
+
+func (m *Model) restoreSnapshot(snapshot *viewSnapshot) {
+	m.grid = snapshot.grid
+	m.query = snapshot.query
+	m.result = snapshot.result
+	m.performers = append([]browse.PerformerItem(nil), snapshot.performers...)
+	m.sceneCursor = snapshot.sceneCursor
+	m.sceneGridStart = snapshot.sceneGridStart
+	m.cursor = snapshot.cursor
+	m.gridStart = snapshot.gridStart
+	m.showDetails = snapshot.showDetails
+	m.showPerformerDetails = snapshot.showPerformerDetails
+	m.performerCursor = snapshot.performerCursor
+	m.confirmDelete = false
+	m.status = snapshot.status
+}
+
+func (m Model) sceneCursorIfValid() int {
+	if m.cursor >= 0 && m.cursor < len(m.result.Items) {
+		return m.cursor
+	}
+	if m.sceneCursor >= 0 && m.sceneCursor < len(m.result.Items) {
+		return m.sceneCursor
+	}
+	return 0
+}
+
 func (m Model) executeSetSceneRating(rating int) (tea.Model, tea.Cmd) {
 	if m.editor == nil {
 		m.status = "Editing is unavailable"
@@ -1022,10 +1371,27 @@ func (m Model) executeRatingCommand(args []string) (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
-	if m.inPerformerGrid() {
+	if m.inPerformerGrid() || m.showDetails {
 		return m.executeSetPerformerRating(rating)
 	}
 	return m.executeSetSceneRating(rating)
+}
+
+func (m Model) executeSelectedPerformerScenes() (tea.Model, tea.Cmd) {
+	performer, ok := m.selectedPerformer()
+	if !ok {
+		m.status = "No performer selected"
+		return m, nil
+	}
+	previous := m.snapshot()
+	m.returnToSceneGrid()
+	m.previousView = previous
+	m.query = browse.Query{
+		Page:      1,
+		PerPage:   40,
+		Performer: performer.Name,
+	}
+	return m, m.refresh()
 }
 
 func parseRatingArg(raw string) (int, error) {
@@ -1126,6 +1492,11 @@ func (m Model) executeSetPerformerRating(rating int) (tea.Model, tea.Cmd) {
 	}
 	if m.inPerformerGrid() {
 		m.performers[m.cursor].Rating = &rating
+	} else if m.showDetails && m.cursor >= 0 && m.cursor < len(m.result.Items) {
+		performers := m.result.Items[m.cursor].Performers
+		if m.performerCursor >= 0 && m.performerCursor < len(performers) {
+			m.result.Items[m.cursor].Performers[m.performerCursor].Rating = &rating
+		}
 	}
 	return m, func() tea.Msg {
 		if err := m.editor.SetPerformerRating(m.ctx, performer.ID, rating); err != nil {
@@ -1321,6 +1692,12 @@ type coverMsg struct {
 	err     error
 }
 
+type performerImageMsg struct {
+	performerID int
+	image       image.Image
+	err         error
+}
+
 type playMsg struct {
 	play *playState
 	item browse.SceneItem
@@ -1456,6 +1833,45 @@ func (m *Model) loadVisibleCovers() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m *Model) loadVisiblePerformerImages() tea.Cmd {
+	if m.performerImages == nil {
+		return nil
+	}
+	item, ok := m.selectedItem()
+	if !ok {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	for _, performer := range visiblePerformers(item.Performers, m.performerCursor, m.width, m.height) {
+		performerPic := m.performerPic(performer.ID)
+		if performerPic.state != gridCoverMissing {
+			continue
+		}
+		performerPic.state = gridCoverLoading
+		cmds = append(cmds, m.loadPerformerImage(performer))
+	}
+
+	return tea.Batch(cmds...)
+}
+
+func (m Model) loadPerformerImage(performer browse.PerformerItem) tea.Cmd {
+	return func() tea.Msg {
+		loaded, err := m.performerImages.LoadPerformer(m.ctx, performer.ID)
+		if err != nil {
+			return performerImageMsg{performerID: performer.ID, err: err}
+		}
+		if len(loaded.Data) == 0 {
+			return performerImageMsg{performerID: performer.ID}
+		}
+		img, _, err := image.Decode(bytes.NewReader(loaded.Data))
+		if err != nil {
+			return performerImageMsg{performerID: performer.ID, err: fmt.Errorf("decode performer image: %w", err)}
+		}
+		return performerImageMsg{performerID: performer.ID, image: img}
+	}
+}
+
 func (m Model) loadCover(item browse.SceneItem) tea.Cmd {
 	return func() tea.Msg {
 		loaded, err := m.covers.Load(m.ctx, cover.Request{
@@ -1515,10 +1931,37 @@ func (m *Model) gridPic(sceneID int) *gridCover {
 	return gridPic
 }
 
+func (m *Model) performerPic(performerID int) *gridCover {
+	if m.performerPics == nil {
+		m.performerPics = map[int]*gridCover{}
+	}
+	if existing := m.performerPics[performerID]; existing != nil {
+		return existing
+	}
+
+	pic := picture.NewWithConfig(picture.Config{
+		KittyID: 9000 + performerID,
+		Fit:     picture.FitCover,
+		Anchor:  picture.AnchorCenter,
+	})
+	if m.forceKitty {
+		_ = pic.Toggle()
+	}
+	_ = pic.SetSize(gridTileWidth-4, gridCoverRows)
+	performerPic := &gridCover{pic: pic}
+	m.performerPics[performerID] = performerPic
+	return performerPic
+}
+
 func (m *Model) resizeGridPictures() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, gridPic := range m.gridPics {
 		if cmd := gridPic.pic.SetSize(gridTileWidth-4, gridCoverRows); cmd != nil {
+			cmds = append(cmds, m.ensureKitty(cmd))
+		}
+	}
+	for _, performerPic := range m.performerPics {
+		if cmd := performerPic.pic.SetSize(gridTileWidth-4, gridCoverRows); cmd != nil {
 			cmds = append(cmds, m.ensureKitty(cmd))
 		}
 	}
@@ -1535,6 +1978,11 @@ func (m *Model) updatePictures(msg tea.Msg) tea.Cmd {
 	}
 	for _, gridPic := range m.gridPics {
 		if cmd := gridPic.pic.Update(msg); cmd != nil {
+			cmds = append(cmds, m.ensureKitty(cmd))
+		}
+	}
+	for _, performerPic := range m.performerPics {
+		if cmd := performerPic.pic.Update(msg); cmd != nil {
 			cmds = append(cmds, m.ensureKitty(cmd))
 		}
 	}

@@ -87,13 +87,15 @@ func main() {
 		return
 	}
 
+	coverService := cover.New(store.Repo, cfg.CacheDir)
 	if err := tui.Run(context.Background(), tui.Deps{
-		Browser:    browse.New(store.Repo),
-		Editor:     edit.New(store.Repo),
-		Covers:     cover.New(store.Repo, cfg.CacheDir),
-		Player:     player.New(store.Repo, cfg.FFplayPath, cfg.FFplayArgs),
-		Scanner:    s,
-		ForceKitty: cfg.GraphicsMode == config.GraphicsKitty,
+		Browser:         browse.New(store.Repo),
+		Editor:          edit.New(store.Repo),
+		Covers:          coverService,
+		PerformerImages: coverService,
+		Player:          player.New(store.Repo, cfg.FFplayPath, cfg.FFplayArgs),
+		Scanner:         s,
+		ForceKitty:      cfg.GraphicsMode == config.GraphicsKitty,
 	}, mode); err != nil {
 		exitError(err)
 		return

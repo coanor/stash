@@ -25,10 +25,11 @@ type Request struct {
 }
 
 type Cover struct {
-	SceneID int
-	Data    []byte
-	Path    string
-	Source  Source
+	SceneID     int
+	PerformerID int
+	Data        []byte
+	Path        string
+	Source      Source
 }
 
 type Service struct {
@@ -58,6 +59,25 @@ func (s *Service) Load(ctx context.Context, req Request) (Cover, error) {
 	}
 
 	return Cover{SceneID: req.SceneID, Source: SourceMissing}, nil
+}
+
+func (s *Service) LoadPerformer(ctx context.Context, performerID int) (Cover, error) {
+	if s.hasRepo {
+		var data []byte
+		if err := s.repo.WithReadTxn(ctx, func(ctx context.Context) error {
+			var err error
+			data, err = s.repo.Performer.GetImage(ctx, performerID)
+			return err
+		}); err != nil {
+			return Cover{}, fmt.Errorf("read performer image: %w", err)
+		}
+
+		if len(data) > 0 {
+			return Cover{PerformerID: performerID, Data: data, Source: SourceDatabase}, nil
+		}
+	}
+
+	return Cover{PerformerID: performerID, Source: SourceMissing}, nil
 }
 
 func (s *Service) WriteCache(sceneID int, data []byte) (string, error) {

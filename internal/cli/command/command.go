@@ -13,7 +13,7 @@ type Command struct {
 
 var ErrNotCommand = errors.New("input is not a command")
 
-var completableCommands = []string{"search", "scan", "random", "clear", "rating", "performers", "delete", "back", "help"}
+var completableCommands = []string{"search", "scan", "random", "default", "clear", "rating", "delete", "help"}
 
 func CompletableCommands() []string {
 	return append([]string(nil), completableCommands...)
@@ -38,5 +38,5 @@ func Parse(input string) (Command, error) {
 }
 
 func Help() string {
-	return ":q, search <query>, random <n>, rating <score>, performers, delete, back, clear, scan, help"
+	return ":q, search <query>, random <n>, default, rating <score>, delete, clear, scan, help"
 }

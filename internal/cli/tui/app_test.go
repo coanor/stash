@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +16,7 @@ import (
 
 	"github.com/stashapp/stash/internal/cli/browse"
 	"github.com/stashapp/stash/internal/cli/command"
+	"github.com/stashapp/stash/internal/cli/cover"
 	"github.com/stashapp/stash/internal/cli/scanner"
 )
 
@@ -63,6 +68,20 @@ type fakePlayer struct {
 func (f *fakePlayer) Play(_ context.Context, item browse.SceneItem) error {
 	f.items = append(f.items, item)
 	return f.err
+}
+
+type fakePerformerImages struct {
+	requests []int
+	data     map[int][]byte
+	err      error
+}
+
+func (f *fakePerformerImages) LoadPerformer(_ context.Context, performerID int) (cover.Cover, error) {
+	f.requests = append(f.requests, performerID)
+	if f.err != nil {
+		return cover.Cover{}, f.err
+	}
+	return cover.Cover{Data: f.data[performerID], Source: cover.SourceDatabase}, nil
 }
 
 type fakeEditor struct {
@@ -179,9 +198,32 @@ func TestRandomCommandRejectsInvalidLimit(t *testing.T) {
 	}
 }
 
+func TestDefaultCommandResetsSearchAndClosesDetails(t *testing.T) {
+	browser := &fakeBrowser{}
+	model := NewWithDeps(context.Background(), Deps{Browser: browser}, ViewGrid)
+	model.query = browse.Query{Text: "alice", Tag: "demo", Page: 2, PerPage: 40}
+	model.showDetails = true
+	model.input = "default"
+
+	updated, cmd := model.executeInput()
+	if cmd == nil {
+		t.Fatal("expected default refresh command")
+	}
+	msg := cmd()
+	next, _ := updated.Update(msg)
+	m := next.(Model)
+
+	if m.showDetails {
+		t.Fatal("default should return to the scene grid")
+	}
+	if browser.query.Text != "" || browser.query.Tag != "" || browser.query.Sort != "" || browser.query.Page != 1 || browser.query.PerPage != 40 {
+		t.Fatalf("query = %#v, want default scene grid query", browser.query)
+	}
+}
+
 func TestHelpOmitsRemovedCommands(t *testing.T) {
 	help := command.Help()
-	for _, removed := range []string{"/", "open", "edit"} {
+	for _, removed := range []string{"/", "open", "edit", "performers", "back"} {
 		if strings.Contains(help, removed) {
 			t.Fatalf("help contains removed command %q: %q", removed, help)
 		}
@@ -191,7 +233,7 @@ func TestHelpOmitsRemovedCommands(t *testing.T) {
 	}
 }
 
-func TestDetailsPanelShowsPerformerRatings(t *testing.T) {
+func TestDetailsPanelShowsSceneInfoAndPerformerGrid(t *testing.T) {
 	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
 	model.width = 90
 	model.height = 35
@@ -212,10 +254,282 @@ func TestDetailsPanelShowsPerformerRatings(t *testing.T) {
 	m := next.(Model)
 	view := m.View().Content
 
-	for _, want := range []string{"Rating: 60", "> Alice rating:80", "  Bob rating:--"} {
+	for _, want := range []string{"Rating: 60", "Alice", "rating: 80", "Bob", "rating: --"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view does not contain %q: %q", want, view)
 		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Title: Scene") && strings.Contains(line, "Rating: 60") {
+			return
+		}
+	}
+	t.Fatalf("scene info should be displayed in two columns: %q", view)
+}
+
+func TestPerformerTileShowsMetadataWithoutPlaceholder(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Date:  "2020-02-03",
+			Performers: []browse.PerformerItem{{
+				ID:          7,
+				Name:        "Alice",
+				BirthYear:   ptrInt(1986),
+				HeightCm:    ptrInt(160),
+				CareerStart: ptrInt(2008),
+				SceneCount:  ptrInt(42),
+			}},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	view := m.View().Content
+
+	for _, want := range []string{"Alice", "birth: 86", "height: 160", "age: 34", "career: 08-", "scenes: 42"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view does not contain %q: %q", want, view)
+		}
+	}
+	if strings.Contains(view, "[performer]") {
+		t.Fatalf("performer placeholder should be hidden when no image is loaded: %q", view)
+	}
+}
+
+func TestPerformerTileShowsNameAtTopLeft(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	tile := model.renderPerformerTile(0, browse.PerformerItem{ID: 7, Name: "Alice"}, true)
+	lines := strings.Split(tile, "\n")
+	if len(lines) < 2 || !strings.Contains(lines[0], "Alice") {
+		t.Fatalf("performer name should be embedded in the top border line: %q", tile)
+	}
+	if strings.Contains(lines[1], "Alice") {
+		t.Fatalf("performer name should not be rendered under the top border: %q", tile)
+	}
+}
+
+func TestSpaceOnSelectedPerformerShowsPerformerDetails(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Date:  "2020-01-01",
+			Performers: []browse.PerformerItem{{
+				ID:          7,
+				Name:        "Alice",
+				Rating:      ptrInt(80),
+				BirthYear:   ptrInt(1986),
+				HeightCm:    ptrInt(160),
+				CareerStart: ptrInt(2008),
+				SceneCount:  ptrInt(42),
+			}},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = next.(Model)
+	view := m.View().Content
+
+	if !m.showPerformerDetails {
+		t.Fatal("space on performer should show performer details")
+	}
+	for _, want := range []string{"Name: Alice", "Rating: 80", "Birth: 86", "Height: 160", "Age: 34", "Career: 08-", "Scenes: 42"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view does not contain %q: %q", want, view)
+		}
+	}
+}
+
+func TestEscReturnsFromPerformerDetailsToSceneDetails(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:         42,
+			Title:      "Scene",
+			Performers: []browse.PerformerItem{{ID: 7, Name: "Alice"}},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	next, _ = next.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = next.(Model)
+
+	if m.showPerformerDetails {
+		t.Fatal("esc should close performer details")
+	}
+	if !m.showDetails {
+		t.Fatal("esc should return to scene details")
+	}
+}
+
+func TestSceneTileShowsTitleAtTopLeft(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	tile := model.renderSceneTile(0, browse.SceneItem{ID: 42, Title: "Scene Title"})
+	lines := strings.Split(tile, "\n")
+	if len(lines) < 2 || !strings.Contains(lines[0], "Scene Title") {
+		t.Fatalf("scene title should be embedded in the top border line: %q", tile)
+	}
+	if strings.Contains(lines[gridCoverRows+1], "Scene Title") {
+		t.Fatalf("scene title should not be rendered under the top border: %q", tile)
+	}
+}
+
+func TestDetailsEnterJumpsToSelectedPerformerScenes(t *testing.T) {
+	browser := &fakeBrowser{}
+	model := NewWithDeps(context.Background(), Deps{Browser: browser}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Performers: []browse.PerformerItem{
+				{ID: 7, Name: "Alice"},
+				{ID: 8, Name: "Bob"},
+			},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: "l"})
+	m = next.(Model)
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected performer scene refresh command")
+	}
+	msg := cmd()
+	next, _ = updated.Update(msg)
+	m = next.(Model)
+
+	if browser.query.Performer != "Bob" {
+		t.Fatalf("query = %#v, want performer Bob", browser.query)
+	}
+	if m.showDetails {
+		t.Fatal("enter should return to scene grid")
+	}
+}
+
+func TestEscRestoresSceneDetailsAfterPerformerScenes(t *testing.T) {
+	browser := &fakeBrowser{}
+	model := NewWithDeps(context.Background(), Deps{Browser: browser}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Original Scene",
+			Performers: []browse.PerformerItem{
+				{ID: 7, Name: "Alice"},
+				{ID: 8, Name: "Bob"},
+			},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: "l"})
+	m = next.(Model)
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected performer scene refresh command")
+	}
+	msg := cmd()
+	next, _ = updated.Update(msg)
+	m = next.(Model)
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = next.(Model)
+	view := m.View().Content
+
+	if !m.showDetails {
+		t.Fatal("esc should restore previous scene details")
+	}
+	if m.performerCursor != 1 {
+		t.Fatalf("performer cursor = %d, want 1", m.performerCursor)
+	}
+	if !strings.Contains(view, "Original Scene") || !strings.Contains(view, "Bob") {
+		t.Fatalf("view should restore original scene details: %q", view)
+	}
+}
+
+func TestEscReturnsFromPerformerGridToSceneGrid(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:         42,
+			Title:      "Scene",
+			Performers: []browse.PerformerItem{{ID: 7, Name: "Alice"}},
+		}},
+	}
+	model.grid = gridPerformers
+	model.performers = []browse.PerformerItem{{ID: 7, Name: "Alice"}}
+	model.sceneCursor = 0
+	model.sceneGridStart = 0
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m := next.(Model)
+
+	if m.inPerformerGrid() {
+		t.Fatal("esc should return from performer grid to scene grid")
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0", m.cursor)
+	}
+}
+
+func TestDetailsViewLoadsPerformerHeadImages(t *testing.T) {
+	images := &fakePerformerImages{data: map[int][]byte{7: testPNG(t)}}
+	model := NewWithDeps(context.Background(), Deps{
+		Browser:         &fakeBrowser{},
+		PerformerImages: images,
+		ForceKitty:      true,
+	}, ViewGrid)
+	model.width = 90
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:         42,
+			Title:      "Scene",
+			Performers: []browse.PerformerItem{{ID: 7, Name: "Alice"}},
+		}},
+	}
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if cmd == nil {
+		t.Fatal("expected performer image load command")
+	}
+	msg := runPerformerImageCommand(t, cmd)
+	next, _ := updated.Update(msg)
+	m := next.(Model)
+	view := m.View().Content
+
+	if len(images.requests) != 1 || images.requests[0] != 7 {
+		t.Fatalf("performer image requests = %#v, want [7]", images.requests)
+	}
+	if strings.Contains(view, "[performer]") {
+		t.Fatalf("performer tile should render loaded image instead of placeholder: %q", view)
 	}
 }
 
@@ -244,8 +558,8 @@ func TestSpaceShowsSceneInfoTextAreaInsteadOfGrid(t *testing.T) {
 	if strings.Contains(view, "[cover loading]") {
 		t.Fatalf("details text area should replace the grid, not append below it: %q", view)
 	}
-	if !strings.Contains(view, "h/j/k/l browse") {
-		t.Fatalf("footer should stay visible and fixed: %q", view)
+	if strings.Contains(view, "h/j/k/l browse") {
+		t.Fatalf("normal footer hint should be hidden: %q", view)
 	}
 
 	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -282,66 +596,17 @@ func TestRatingCommandUpdatesSelectedScene(t *testing.T) {
 	}
 }
 
-func TestPerformersCommandShowsSelectedScenePerformersGrid(t *testing.T) {
+func TestPerformersCommandIsRemoved(t *testing.T) {
 	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
-	model.width = 90
-	model.height = 35
-	model.result = browse.Result{
-		Total: 1,
-		Items: []browse.SceneItem{{
-			ID:    42,
-			Title: "Scene",
-			Performers: []browse.PerformerItem{
-				{ID: 7, Name: "Alice", Rating: ptrInt(80)},
-				{ID: 8, Name: "Bob"},
-			},
-		}},
-	}
 	model.input = "performers"
 
 	updated, cmd := model.executeInput()
 	if cmd != nil {
-		t.Fatal("expected no async command")
+		t.Fatal("expected removed command to be synchronous")
 	}
 	m := updated.(Model)
-	view := m.View().Content
-
-	if !m.inPerformerGrid() {
-		t.Fatal("expected performer grid")
-	}
-	for _, want := range []string{"Alice", "80", "Bob"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("performer grid missing %q: %q", want, view)
-		}
-	}
-}
-
-func TestBackCommandReturnsToSceneGrid(t *testing.T) {
-	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
-	model.result = browse.Result{
-		Total: 1,
-		Items: []browse.SceneItem{{
-			ID:         42,
-			Title:      "Scene",
-			Performers: []browse.PerformerItem{{ID: 7, Name: "Alice"}},
-		}},
-	}
-	model.input = "performers"
-	updated, _ := model.executeInput()
-	m := updated.(Model)
-	m.input = "back"
-
-	updated, cmd := m.executeInput()
-	if cmd != nil {
-		t.Fatal("expected no async command")
-	}
-	m = updated.(Model)
-
-	if m.inPerformerGrid() {
-		t.Fatal("expected scene grid")
-	}
-	if m.cursor != 0 || m.result.Items[0].Title != "Scene" {
-		t.Fatalf("scene grid not restored: cursor=%d result=%#v", m.cursor, m.result.Items)
+	if m.status != "Unknown command: performers" {
+		t.Fatalf("status = %q", m.status)
 	}
 }
 
@@ -397,9 +662,9 @@ func TestPerformerGridRatingAndDeleteCommandsUseSelectedPerformer(t *testing.T) 
 			},
 		}},
 	}
-	model.input = "performers"
-	updated, _ := model.executeInput()
-	m := updated.(Model)
+	model.grid = gridPerformers
+	model.performers = append([]browse.PerformerItem(nil), model.result.Items[0].Performers...)
+	m := model
 	next, _ := m.Update(tea.KeyPressMsg{Text: "l"})
 	m = next.(Model)
 	m.input = "rating 90"
@@ -430,6 +695,70 @@ func TestPerformerGridRatingAndDeleteCommandsUseSelectedPerformer(t *testing.T) 
 	_ = next.(Model)
 	if len(editor.deletedPerformers) != 1 || editor.deletedPerformers[0] != 8 {
 		t.Fatalf("deleted performers = %#v, want [8]", editor.deletedPerformers)
+	}
+}
+
+func TestDetailsViewVimKeysMovePerformerGridCursor(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 58
+	model.height = 35
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Performers: []browse.PerformerItem{
+				{ID: 7, Name: "Alice"},
+				{ID: 8, Name: "Bob"},
+				{ID: 9, Name: "Cara"},
+				{ID: 10, Name: "Dana"},
+			},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: "l"})
+	m = next.(Model)
+	if m.performerCursor != 1 {
+		t.Fatalf("after l performer cursor = %d, want 1", m.performerCursor)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Text: "j"})
+	m = next.(Model)
+	if m.performerCursor != 3 {
+		t.Fatalf("after j performer cursor = %d, want 3", m.performerCursor)
+	}
+}
+
+func TestDetailsRatingCommandUpdatesSelectedPerformer(t *testing.T) {
+	editor := &fakeEditor{}
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}, Editor: editor}, ViewGrid)
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{
+			ID:    42,
+			Title: "Scene",
+			Performers: []browse.PerformerItem{
+				{ID: 7, Name: "Alice"},
+				{ID: 8, Name: "Bob"},
+			},
+		}},
+	}
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m := next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: "l"})
+	m = next.(Model)
+	m.input = "rating 91"
+	updated, cmd := m.executeInput()
+	if cmd == nil {
+		t.Fatal("expected performer rating command")
+	}
+	msg := cmd()
+	next, _ = updated.Update(msg)
+
+	if got := editor.performerRatings[8]; got != 91 {
+		t.Fatalf("performer rating = %d, want 91", got)
 	}
 }
 
@@ -810,8 +1139,10 @@ func TestVimKeysMoveGridCursor(t *testing.T) {
 	}
 }
 
-func TestSpaceTogglesSelectedSceneDetails(t *testing.T) {
+func TestSpaceShowsSelectedItemDetails(t *testing.T) {
 	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.width = 90
+	model.height = 35
 	model.result = browse.Result{
 		Total: 1,
 		Items: []browse.SceneItem{{
@@ -832,7 +1163,7 @@ func TestSpaceTogglesSelectedSceneDetails(t *testing.T) {
 		t.Fatal("expected details to be shown")
 	}
 	view := m.View().Content
-	for _, want := range []string{"Path: /tmp/scene.mp4", "> Alice rating:--", "  Bob rating:--", "Tags: demo", "Studio: Studio"} {
+	for _, want := range []string{"Path: /tmp/scene.mp4", "Alice", "Bob", "Tags: demo", "Studio: Studio"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view does not contain %q: %q", want, view)
 		}
@@ -840,8 +1171,8 @@ func TestSpaceTogglesSelectedSceneDetails(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = next.(Model)
-	if m.showDetails {
-		t.Fatal("expected details to be hidden")
+	if !m.showPerformerDetails {
+		t.Fatal("expected performer details to be shown")
 	}
 }
 
@@ -860,6 +1191,21 @@ func TestGridTileDisplaysPerformerSummary(t *testing.T) {
 	view := model.View().Content
 	if !strings.Contains(view, "Alice <2 omitted>") {
 		t.Fatalf("view does not show performer summary: %q", view)
+	}
+}
+
+func TestViewOmitsStaticHeaderAndStatus(t *testing.T) {
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
+	model.status = "8 results"
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{ID: 42, Title: "Scene"}},
+	}
+
+	view := model.View().Content
+	firstLine := strings.SplitN(view, "\n", 2)[0]
+	if strings.Contains(firstLine, "stash-cli") || strings.Contains(firstLine, "results") {
+		t.Fatalf("view should start with grid content, got first line %q in %q", firstLine, view)
 	}
 }
 
@@ -1050,6 +1396,37 @@ func runPlayCommand(t *testing.T, cmd tea.Cmd) tea.Msg {
 		t.Fatal("play batch was empty")
 	}
 	return batch[0]()
+}
+
+func runPerformerImageCommand(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return msg
+	}
+	for _, batched := range batch {
+		msg = batched()
+		if _, ok := msg.(performerImageMsg); ok {
+			return msg
+		}
+	}
+
+	t.Fatal("batch did not include performerImageMsg")
+	return nil
+}
+
+func testPNG(t *testing.T) []byte {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }
 
 func TestScanProgressStatusShowsScannedCount(t *testing.T) {

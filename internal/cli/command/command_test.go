@@ -21,3 +21,20 @@ func TestParseRejectsEmptyInput(t *testing.T) {
 		t.Fatal("expected empty command error")
 	}
 }
+
+func TestCompletableCommandsOmitPerformers(t *testing.T) {
+	for _, name := range CompletableCommands() {
+		if name == "performers" {
+			t.Fatal("performers command should not be completable")
+		}
+	}
+}
+
+func TestCompletableCommandsIncludeDefault(t *testing.T) {
+	for _, name := range CompletableCommands() {
+		if name == "default" {
+			return
+		}
+	}
+	t.Fatal("default command should be completable")
+}
