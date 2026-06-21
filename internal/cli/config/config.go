@@ -6,29 +6,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
 const (
-	GraphicsAuto     = "auto"
-	GraphicsKitty    = "kitty"
-	GraphicsListOnly = "list-only"
-)
-
-var (
-	defaultDisplayFields = []string{"name", "duration", "date"}
-	validGraphicsModes   = []string{GraphicsAuto, GraphicsKitty, GraphicsListOnly}
-	validDisplayFields   = []string{"name", "title", "duration", "date", "rating", "organized", "path", "performers", "tags"}
+	GraphicsAuto  = "auto"
+	GraphicsKitty = "kitty"
 )
 
 type Config struct {
 	DatabasePath  string   `toml:"database_path"`
 	MediaDirs     []string `toml:"media_dirs"`
 	ScanOnStartup bool     `toml:"scan_on_startup"`
-	DisplayFields []string `toml:"display_fields"`
 	GraphicsMode  string   `toml:"graphics_mode"`
 	CacheDir      string   `toml:"cache_dir"`
 	LogFile       string   `toml:"log_file"`
@@ -47,14 +38,13 @@ type Blobs struct {
 
 func Default() Config {
 	return Config{
-		DisplayFields: append([]string(nil), defaultDisplayFields...),
-		GraphicsMode:  GraphicsAuto,
-		CacheDir:      defaultCacheDir(),
-		LogFile:       defaultLogFile(),
-		LogLevel:      "info",
-		FFprobePath:   lookupPath("ffprobe"),
-		FFplayPath:    lookupPathOrName("ffplay"),
-		FFplayArgs:    []string{"-autoexit", "-hide_banner", "-loglevel", "warning"},
+		GraphicsMode: GraphicsAuto,
+		CacheDir:     defaultCacheDir(),
+		LogFile:      defaultLogFile(),
+		LogLevel:     "info",
+		FFprobePath:  lookupPath("ffprobe"),
+		FFplayPath:   lookupPathOrName("ffplay"),
+		FFplayArgs:   []string{"-autoexit", "-hide_banner", "-loglevel", "warning"},
 		Blobs: Blobs{
 			Storage: "database",
 		},
@@ -127,10 +117,6 @@ func (c *Config) Normalize() error {
 		c.GraphicsMode = GraphicsAuto
 	}
 
-	if len(c.DisplayFields) == 0 {
-		c.DisplayFields = append([]string(nil), defaultDisplayFields...)
-	}
-
 	if c.CacheDir == "" {
 		c.CacheDir = defaultCacheDir()
 	}
@@ -168,14 +154,10 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("database_path cannot be empty"))
 	}
 
-	if !slices.Contains(validGraphicsModes, c.GraphicsMode) {
-		errs = append(errs, fmt.Errorf("graphics_mode must be one of %s", strings.Join(validGraphicsModes, ", ")))
-	}
-
-	for _, field := range c.DisplayFields {
-		if !slices.Contains(validDisplayFields, field) {
-			errs = append(errs, fmt.Errorf("display_fields contains unknown field %q", field))
-		}
+	switch c.GraphicsMode {
+	case GraphicsAuto, GraphicsKitty:
+	default:
+		errs = append(errs, errors.New("graphics_mode must be one of auto, kitty"))
 	}
 
 	if c.ScanOnStartup && len(c.MediaDirs) == 0 {
@@ -206,7 +188,6 @@ func Example() string {
 database_path = '~/.stash/stash-go.sqlite'
 media_dirs = ['/mnt/media/videos', '/run/media/tan/remote/videos']
 scan_on_startup = true
-display_fields = ['name', 'duration', 'date']
 graphics_mode = 'auto'
 cache_dir = '~/.cache/stash-cli'
 log_file = '~/.local/state/stash-cli/stash-cli.log'

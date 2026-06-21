@@ -76,11 +76,6 @@ func main() {
 		return
 	}
 
-	mode := tui.ViewGrid
-	if cfg.GraphicsMode == config.GraphicsListOnly {
-		mode = tui.ViewList
-	}
-
 	s, err := scanner.New(cfg, store.Repo)
 	if err != nil {
 		exitError(err)
@@ -96,7 +91,7 @@ func main() {
 		Player:          player.New(store.Repo, cfg.FFplayPath, cfg.FFplayArgs),
 		Scanner:         s,
 		ForceKitty:      cfg.GraphicsMode == config.GraphicsKitty,
-	}, mode); err != nil {
+	}, tui.ViewGrid); err != nil {
 		exitError(err)
 		return
 	}

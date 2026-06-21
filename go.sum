@@ -62,6 +62,8 @@ github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
 github.com/DATA-DOG/go-sqlmock v1.5.0/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
+github.com/NimbleMarkets/ntcharts/v2 v2.2.0 h1:c173B0dc2eaJMJGEzlGEn8AVpuupIot5BkqLawJrVVo=
+github.com/NimbleMarkets/ntcharts/v2 v2.2.0/go.mod h1:/REzF4aM+P5xGMUHtYczoTtQNL9E65mxOTyQPgiXkUQ=
 github.com/NimbleMarkets/pixterm v0.0.0-20260501211346-dc18ac6c1a0f h1:pqwrnHeqwiYovxidiJKVG+iGpeSgBppV4x1Q/GiiloU=
 github.com/NimbleMarkets/pixterm v0.0.0-20260501211346-dc18ac6c1a0f/go.mod h1:haobE4fv7G0QU/wooHEsJFf3ykzuYy5cDOfbPHFOHvw=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=

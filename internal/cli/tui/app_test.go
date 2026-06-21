@@ -120,7 +120,7 @@ func (f *fakeEditor) DeletePerformer(_ context.Context, performerID int) error {
 
 func TestSearchCommandUpdatesQuery(t *testing.T) {
 	browser := &fakeBrowser{}
-	model := New(context.Background(), browser, ViewList)
+	model := New(context.Background(), browser, ViewGrid)
 	model.input = "search tag:demo alice"
 
 	updated, cmd := model.executeInput()
@@ -763,7 +763,7 @@ func TestDetailsRatingCommandUpdatesSelectedPerformer(t *testing.T) {
 }
 
 func TestQuitCommand(t *testing.T) {
-	model := New(context.Background(), &fakeBrowser{}, ViewList)
+	model := New(context.Background(), &fakeBrowser{}, ViewGrid)
 	model.input = "quit"
 
 	_, cmd := model.executeInput()
@@ -784,7 +784,7 @@ func TestScanCommandRunsScannerAndRefreshesResults(t *testing.T) {
 			Errors:       []error{context.Canceled},
 		},
 	}
-	model := NewWithDeps(context.Background(), Deps{Browser: browser, Scanner: scanner}, ViewList)
+	model := NewWithDeps(context.Background(), Deps{Browser: browser, Scanner: scanner}, ViewGrid)
 	model.input = "scan"
 
 	updated, cmd := model.executeInput()
@@ -1361,7 +1361,7 @@ func TestDownAtLoadedEndFetchesNextPage(t *testing.T) {
 			Items: makeSceneItems(5),
 		},
 	}
-	model := NewWithDeps(context.Background(), Deps{Browser: browser}, ViewList)
+	model := NewWithDeps(context.Background(), Deps{Browser: browser}, ViewGrid)
 	model.query = browse.Query{Page: 1, PerPage: 40}
 	model.cursor = 39
 	model.result = browse.Result{
@@ -1471,7 +1471,7 @@ func testPNG(t *testing.T) []byte {
 }
 
 func TestScanProgressStatusShowsScannedCount(t *testing.T) {
-	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewList)
+	model := NewWithDeps(context.Background(), Deps{Browser: &fakeBrowser{}}, ViewGrid)
 
 	next, _ := model.Update(scanProgressMsg{progress: scanner.Progress{
 		Directories:  2,

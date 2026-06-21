@@ -58,7 +58,6 @@ type ViewMode string
 
 const (
 	ViewGrid ViewMode = "grid"
-	ViewList ViewMode = "list"
 )
 
 var (
@@ -1256,14 +1255,6 @@ func (m Model) executeInput() (tea.Model, tea.Cmd) {
 		m.clearNavigationHistory()
 		m.query = browse.Query{Page: 1, PerPage: 40}
 		return m, m.refresh()
-	case "view":
-		if len(cmd.Args) != 1 || cmd.Args[0] != string(ViewGrid) {
-			m.status = "Usage: /view grid"
-			return m, nil
-		}
-		m.mode = ViewMode(cmd.Args[0])
-		m.status = "View mode changed"
-		return m, m.loadVisibleCovers()
 	case "scan":
 		return m.executeScan()
 	case "kitty":
@@ -1423,45 +1414,6 @@ func parseRatingArg(raw string) (int, error) {
 		return 0, fmt.Errorf("Rating must be between 0 and 100")
 	}
 	return rating, nil
-}
-
-func (m Model) executePerformersCommand(args []string) (tea.Model, tea.Cmd) {
-	if len(args) != 0 {
-		m.status = "Usage: performers"
-		return m, nil
-	}
-	item, ok := m.selectedItem()
-	if !ok {
-		m.status = "No scene selected"
-		return m, nil
-	}
-	m.sceneCursor = m.cursor
-	m.sceneGridStart = m.gridStart
-	m.performers = append([]browse.PerformerItem(nil), item.Performers...)
-	m.grid = gridPerformers
-	m.cursor = 0
-	m.gridStart = 0
-	m.showDetails = false
-	m.confirmDelete = false
-	m.status = fmt.Sprintf("%d performers", len(m.performers))
-	return m, nil
-}
-
-func (m Model) executeBackCommand(args []string) (tea.Model, tea.Cmd) {
-	if len(args) != 0 {
-		m.status = "Usage: back"
-		return m, nil
-	}
-	if !m.inPerformerGrid() {
-		m.status = "Already in scene grid"
-		return m, nil
-	}
-	m.grid = gridScenes
-	m.performers = nil
-	m.cursor = m.sceneCursor
-	m.gridStart = m.sceneGridStart
-	m.status = fmt.Sprintf("%d results", m.result.Total)
-	return m, m.loadVisibleCovers()
 }
 
 func (m Model) executeDeleteCommand(args []string) (tea.Model, tea.Cmd) {

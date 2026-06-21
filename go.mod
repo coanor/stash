@@ -74,8 +74,6 @@ require (
 	modernc.org/sqlite v1.52.0
 )
 
-replace github.com/NimbleMarkets/ntcharts/v2 => /home/tan/git/ntcharts
-
 require (
 	github.com/NimbleMarkets/pixterm v0.0.0-20260501211346-dc18ac6c1a0f // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect

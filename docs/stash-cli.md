@@ -22,7 +22,6 @@ go run ./cmd/stash-cli
 database_path = "/home/tan/git/stash/.local/stash-go.sqlite"
 media_dirs = ["/mnt/media/videos", "/run/media/tan/remote/videos"]
 scan_on_startup = true
-display_fields = ["name", "duration", "date"]
 graphics_mode = "auto"
 cache_dir = "~/.cache/stash-cli"
 log_file = "~/.local/state/stash-cli/stash-cli.log"
@@ -38,7 +37,7 @@ storage = "filesystem"
 path = "/home/tan/git/stash/.local/blobs"
 ```
 
-`graphics_mode` 支持 `auto`、`kitty` 和旧配置兼容的 `list-only`。当前 TUI 默认使用封面网格；`kitty` 会强制使用 Kitty graphics，适合 Kitty/Ghostty 等已确认支持 Kitty 协议的终端；`auto` 会依赖终端探测，失败时可能回退到 glyph。远程视频请先通过 `sshfs`、NFS、SMB 等方式挂载成本机路径，再写入 `media_dirs`。
+`graphics_mode` 支持 `auto` 和 `kitty`。当前 TUI 使用封面网格；`kitty` 会强制使用 Kitty graphics，适合 Kitty/Ghostty 等已确认支持 Kitty 协议的终端；`auto` 会依赖终端探测，失败时可能回退到 glyph。远程视频请先通过 `sshfs`、NFS、SMB 等方式挂载成本机路径，再写入 `media_dirs`。
 
 `log_stdout = false` 会把日志只写入 `log_file`，避免破坏 TUI 画面。调试时可临时设为 `true` 或用 `tail -f ~/.local/state/stash-cli/stash-cli.log` 观察日志。
 
