@@ -61,12 +61,16 @@ func (f *fakeScanner) ScanWithProgress(_ context.Context, progress func(scanner.
 }
 
 type fakePlayer struct {
-	items []browse.SceneItem
-	err   error
+	items    []browse.SceneItem
+	progress time.Duration
+	err      error
 }
 
-func (f *fakePlayer) Play(_ context.Context, item browse.SceneItem) error {
+func (f *fakePlayer) Play(_ context.Context, item browse.SceneItem, progress func(time.Duration)) error {
 	f.items = append(f.items, item)
+	if f.progress > 0 && progress != nil {
+		progress(f.progress)
+	}
 	return f.err
 }
 
@@ -958,6 +962,59 @@ func TestNormalEnterReportsPlayerErrors(t *testing.T) {
 
 	if m.status != "ffplay failed" {
 		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestNormalEnterUsesPlayerProgress(t *testing.T) {
+	player := &fakePlayer{progress: 30 * time.Minute}
+	model := NewWithDeps(context.Background(), Deps{
+		Browser: &fakeBrowser{},
+		Player:  player,
+	}, ViewGrid)
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{ID: 42, Title: "Scene", Path: "/tmp/scene.mp4", Duration: 7200}},
+	}
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected play command")
+	}
+	runPlayCommand(t, cmd)
+	m := updated.(Model)
+
+	if got := m.play.elapsed(); got != 30*time.Minute {
+		t.Fatalf("play elapsed = %s, want 30m", got)
+	}
+}
+
+func TestNormalEnterUpdatesResumeTimeForReplay(t *testing.T) {
+	player := &fakePlayer{progress: 30 * time.Minute}
+	model := NewWithDeps(context.Background(), Deps{
+		Browser: &fakeBrowser{},
+		Player:  player,
+	}, ViewGrid)
+	model.result = browse.Result{
+		Total: 1,
+		Items: []browse.SceneItem{{ID: 42, Title: "Scene", Path: "/tmp/scene.mp4", Duration: 7200}},
+	}
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	msg := runPlayCommand(t, cmd)
+	next, _ := updated.Update(msg)
+	m := next.(Model)
+
+	if got := m.result.Items[0].ResumeTime; got != 1800 {
+		t.Fatalf("ResumeTime = %v, want 1800", got)
+	}
+
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runPlayCommand(t, cmd)
+	if len(player.items) != 2 {
+		t.Fatalf("played items = %d, want 2", len(player.items))
+	}
+	if got := player.items[1].ResumeTime; got != 1800 {
+		t.Fatalf("second play ResumeTime = %v, want 1800", got)
 	}
 }
 

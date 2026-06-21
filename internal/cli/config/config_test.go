@@ -46,11 +46,11 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 	if cfg.Blobs.Storage != "database" {
 		t.Fatalf("Blobs.Storage = %q, want database", cfg.Blobs.Storage)
 	}
-	if cfg.FFplayPath == "" {
-		t.Fatal("FFplayPath should have a default")
+	if cfg.PlayerPath == "" {
+		t.Fatal("PlayerPath should have a default")
 	}
-	if got := strings.Join(cfg.FFplayArgs, ","); got != "-autoexit,-hide_banner,-loglevel,warning" {
-		t.Fatalf("FFplayArgs = %q, want default ffplay args", got)
+	if len(cfg.PlayerArgs) == 0 {
+		t.Fatal("PlayerArgs should have a default")
 	}
 }
 
@@ -65,7 +65,51 @@ func TestDefaultPathUsesUserConfigDir(t *testing.T) {
 	}
 }
 
-func TestLoadConfigCanSetFFplayCommand(t *testing.T) {
+func TestLoadConfigCanSetPlayerCommand(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	err := os.WriteFile(configPath, []byte(`
+database_path = "/tmp/stash.sqlite"
+player_path = "/usr/local/bin/mpv"
+player_args = ["--force-window=yes", "--keep-open=no"]
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.PlayerPath != "/usr/local/bin/mpv" {
+		t.Fatalf("PlayerPath = %q, want configured path", cfg.PlayerPath)
+	}
+	if got := strings.Join(cfg.PlayerArgs, ","); got != "--force-window=yes,--keep-open=no" {
+		t.Fatalf("PlayerArgs = %q, want configured args", got)
+	}
+}
+
+func TestLoadConfigDefaultsMPVArgs(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	err := os.WriteFile(configPath, []byte(`
+database_path = "/tmp/stash.sqlite"
+player_path = "/usr/local/bin/mpv"
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(cfg.PlayerArgs, ","); got != "--force-window=yes" {
+		t.Fatalf("PlayerArgs = %q, want mpv default args", got)
+	}
+}
+
+func TestLoadConfigAcceptsLegacyFFplayCommand(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	err := os.WriteFile(configPath, []byte(`
 database_path = "/tmp/stash.sqlite"
@@ -81,11 +125,11 @@ ffplay_args = ["-autoexit", "-fs"]
 		t.Fatal(err)
 	}
 
-	if cfg.FFplayPath != "/usr/local/bin/ffplay" {
-		t.Fatalf("FFplayPath = %q, want configured path", cfg.FFplayPath)
+	if cfg.PlayerPath != "/usr/local/bin/ffplay" {
+		t.Fatalf("PlayerPath = %q, want legacy ffplay path", cfg.PlayerPath)
 	}
-	if got := strings.Join(cfg.FFplayArgs, ","); got != "-autoexit,-fs" {
-		t.Fatalf("FFplayArgs = %q, want configured args", got)
+	if got := strings.Join(cfg.PlayerArgs, ","); got != "-autoexit,-fs" {
+		t.Fatalf("PlayerArgs = %q, want legacy ffplay args", got)
 	}
 }
 

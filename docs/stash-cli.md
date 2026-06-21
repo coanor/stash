@@ -28,8 +28,11 @@ log_file = "~/.local/state/stash-cli/stash-cli.log"
 log_level = "info"
 log_stdout = false
 ffprobe_path = "/usr/bin/ffprobe"
-ffplay_path = "/usr/bin/ffplay"
-ffplay_args = ["-autoexit", "-hide_banner", "-loglevel", "warning"]
+player_path = "/usr/bin/mpv"
+player_args = ["--force-window=yes"]
+# 也可以继续使用 ffplay：
+# player_path = "/usr/bin/ffplay"
+# player_args = ["-autoexit", "-hide_banner", "-loglevel", "warning"]
 
 [blobs]
 # 必须和 Stash server 的 blob 配置一致。server 使用 FILESYSTEM 时填 filesystem。
@@ -47,9 +50,11 @@ path = "/home/tan/.stash/blobs"
 
 CLI 只读取 Stash 数据库中已有的封面，不通过 stash-box 抓取封面，也不通过 ffmpeg 生成封面。
 
+`player_path` 可配置为 `mpv` 或 `ffplay`。未配置时优先查找 `mpv`，找不到再回退到 `ffplay`。旧配置名 `ffplay_path`、`ffplay_args` 仍可用，但新配置建议使用 `player_path`、`player_args`。使用 `mpv` 时，stash-cli 会通过 mpv IPC 读取 `time-pos`，播放结束后写入 Stash 数据库的 `resume_time`，下次播放会从该位置继续。
+
 ## TUI 操作
 
-TUI 使用 Vim 风格 normal 模式。`h/j/k/l` 或方向键移动当前网格，`enter` 使用 `ffplay_path` 播放当前选中的 scene，`space` 打开当前 scene 的详情视图。播放期间状态栏会显示轻量进度条；`ffplay` 正常退出后，stash-cli 会给该 scene 增加一次 view history，用作播放次数记录。按 `:` 进入底部命令输入栏，`esc` 取消输入，`:q` 退出。
+TUI 使用 Vim 风格 normal 模式。`h/j/k/l` 或方向键移动当前网格，`enter` 使用 `player_path` 播放当前选中的 scene，`space` 打开当前 scene 的详情视图。播放期间状态栏会显示播放器报告的轻量进度条；播放器正常退出后，stash-cli 会给该 scene 增加一次 view history，用作播放次数记录，并在支持进度回报的播放器上同步续播位置。按 `:` 进入底部命令输入栏，`esc` 取消输入，`:q` 退出。
 
 scene 网格卡片显示封面、标题、至少一名 performer，以及短元信息，例如 `1.2h/2012`。日期只显示年份。
 

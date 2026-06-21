@@ -89,7 +89,7 @@ func main() {
 		Editor:          edit.New(store.Repo),
 		Covers:          coverService,
 		PerformerImages: coverService,
-		Player:          player.New(store.Repo, cfg.FFplayPath, cfg.FFplayArgs),
+		Player:          player.New(store.Repo, cfg.PlayerPath, cfg.PlayerArgs),
 		Scanner:         scanSvc,
 		ForceKitty:      cfg.GraphicsMode == config.GraphicsKitty,
 	}, tui.ViewGrid); err != nil {

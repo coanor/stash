@@ -26,6 +26,8 @@ type Config struct {
 	LogLevel      string   `toml:"log_level"`
 	LogStdout     bool     `toml:"log_stdout"`
 	FFprobePath   string   `toml:"ffprobe_path"`
+	PlayerPath    string   `toml:"player_path"`
+	PlayerArgs    []string `toml:"player_args"`
 	FFplayPath    string   `toml:"ffplay_path"`
 	FFplayArgs    []string `toml:"ffplay_args"`
 	Blobs         Blobs    `toml:"blobs"`
@@ -43,8 +45,6 @@ func Default() Config {
 		LogFile:      defaultLogFile(),
 		LogLevel:     "info",
 		FFprobePath:  lookupPath("ffprobe"),
-		FFplayPath:   lookupPathOrName("ffplay"),
-		FFplayArgs:   []string{"-autoexit", "-hide_banner", "-loglevel", "warning"},
 		Blobs: Blobs{
 			Storage: "database",
 		},
@@ -139,9 +139,20 @@ func (c *Config) Normalize() error {
 		return fmt.Errorf("normalize blobs.path: %w", err)
 	}
 
+	c.PlayerPath = strings.TrimSpace(c.PlayerPath)
 	c.FFplayPath = strings.TrimSpace(c.FFplayPath)
-	if len(c.FFplayArgs) == 0 {
-		c.FFplayArgs = []string{"-autoexit", "-hide_banner", "-loglevel", "warning"}
+	if c.PlayerPath == "" && c.FFplayPath != "" {
+		c.PlayerPath = c.FFplayPath
+	}
+	if c.PlayerPath == "" {
+		c.PlayerPath = defaultPlayerPath()
+	}
+	if len(c.PlayerArgs) == 0 {
+		if len(c.FFplayArgs) > 0 {
+			c.PlayerArgs = append([]string(nil), c.FFplayArgs...)
+		} else {
+			c.PlayerArgs = defaultPlayerArgs(c.PlayerPath)
+		}
 	}
 
 	return nil
@@ -194,8 +205,11 @@ log_file = '~/.local/state/stash-cli/stash-cli.log'
 log_level = 'info'
 log_stdout = false
 ffprobe_path = 'ffprobe'
-ffplay_path = 'ffplay'
-ffplay_args = ['-autoexit', '-hide_banner', '-loglevel', 'warning']
+player_path = 'mpv'
+player_args = ['--force-window=yes']
+# Legacy fallback names are still accepted:
+# ffplay_path = 'ffplay'
+# ffplay_args = ['-autoexit', '-hide_banner', '-loglevel', 'warning']
 
 [blobs]
 # Match the Stash server config. Use filesystem when blobs_storage: FILESYSTEM.
@@ -235,6 +249,20 @@ func defaultCacheDir() string {
 	}
 
 	return ".stash-cli-cache"
+}
+
+func defaultPlayerPath() string {
+	if path := lookupPath("mpv"); path != "" {
+		return path
+	}
+	return lookupPathOrName("ffplay")
+}
+
+func defaultPlayerArgs(path string) []string {
+	if strings.EqualFold(filepath.Base(path), "mpv") {
+		return []string{"--force-window=yes"}
+	}
+	return []string{"-autoexit", "-hide_banner", "-loglevel", "warning"}
 }
 
 func defaultLogFile() string {

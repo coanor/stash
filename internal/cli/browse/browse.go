@@ -24,6 +24,7 @@ type SceneItem struct {
 	Title      string
 	Path       string
 	Duration   float64
+	ResumeTime float64
 	Date       string
 	Studio     string
 	Performers []PerformerItem
@@ -294,11 +295,12 @@ func (c *sceneItemCache) performerSceneCount(ctx context.Context, repo models.Re
 
 func (s *Service) sceneItem(ctx context.Context, scene *models.Scene, cache *sceneItemCache) (SceneItem, error) {
 	item := SceneItem{
-		ID:        scene.ID,
-		Title:     scene.GetTitle(),
-		Path:      scene.Path,
-		Rating:    scene.Rating,
-		Organized: scene.Organized,
+		ID:         scene.ID,
+		Title:      scene.GetTitle(),
+		Path:       scene.Path,
+		ResumeTime: scene.ResumeTime,
+		Rating:     scene.Rating,
+		Organized:  scene.Organized,
 	}
 	if scene.Date != nil {
 		item.Date = scene.Date.String()

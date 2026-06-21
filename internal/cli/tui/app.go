@@ -47,7 +47,7 @@ type PerformerImageLoader interface {
 }
 
 type Player interface {
-	Play(context.Context, browse.SceneItem) error
+	Play(context.Context, browse.SceneItem, func(time.Duration)) error
 }
 
 type Scanner interface {
@@ -316,6 +316,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = msg.err.Error()
 			return m, nil
+		}
+		if msg.play != nil {
+			m.applySceneResumeTime(msg.item.ID, msg.play.resumeSeconds())
 		}
 		m.status = "Played: " + msg.item.Title
 	case performerRatingMsg:
@@ -1513,6 +1516,18 @@ func (m *Model) applyPerformerRating(performerID int, rating int) {
 	}
 }
 
+func (m *Model) applySceneResumeTime(sceneID int, resumeTime float64) {
+	if resumeTime <= 0 {
+		return
+	}
+	for i := range m.result.Items {
+		if m.result.Items[i].ID == sceneID {
+			m.result.Items[i].ResumeTime = resumeTime
+			return
+		}
+	}
+}
+
 func (m *Model) applyPerformerDelete(performerID int) {
 	for i, performer := range m.performers {
 		if performer.ID == performerID {
@@ -1570,7 +1585,7 @@ func (m Model) visibleGridCapacity() int {
 
 func (m Model) executePlay() (tea.Model, tea.Cmd) {
 	if m.player == nil {
-		m.status = "Playback is unavailable: configure ffplay_path"
+		m.status = "Playback is unavailable: configure player_path"
 		return m, nil
 	}
 	item, ok := m.selectedItem()
@@ -1587,7 +1602,7 @@ func (m Model) executePlay() (tea.Model, tea.Cmd) {
 	m.play = play
 	m.status = formatPlayProgressStatus(item, 0, play.duration)
 	return m, tea.Batch(func() tea.Msg {
-		err := m.player.Play(m.ctx, item)
+		err := m.player.Play(m.ctx, item, play.setPosition)
 		return playMsg{play: play, item: item, err: err}
 	}, pollPlayProgress(play))
 }
@@ -1624,6 +1639,7 @@ type playState struct {
 	item     browse.SceneItem
 	started  time.Time
 	duration time.Duration
+	position time.Duration
 	finished bool
 }
 
@@ -1640,10 +1656,31 @@ func (p *playState) done() bool {
 }
 
 func (p *playState) elapsed() time.Duration {
+	p.mu.Lock()
+	position := p.position
+	p.mu.Unlock()
+	if position > 0 {
+		return position
+	}
 	if p.started.IsZero() {
 		return 0
 	}
 	return time.Since(p.started)
+}
+
+func (p *playState) setPosition(position time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.position = position
+}
+
+func (p *playState) resumeSeconds() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.position <= 0 {
+		return 0
+	}
+	return p.position.Seconds()
 }
 
 func (s *scanState) setProgress(progress scanner.Progress) {
